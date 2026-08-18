@@ -1,0 +1,12 @@
+[Unit]
+Description=Update dnsdist domain rules every six hours
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=6h
+RandomizedDelaySec=10min
+Persistent=true
+Unit=dnsdist-domain-update.service
+
+[Install]
+WantedBy=timers.target

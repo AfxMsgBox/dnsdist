@@ -1,0 +1,15 @@
+! Title: sample filter
+plain.example.com
+0.0.0.0 telemetry.example.org telemetry-alias.example.org
+||ads.example.com^
+||sub.ads.example.com^
+||*-ad.example.net^
+/^admaster\./
+/^exact\.regex\.example$/
+/^(.+\.)?suffix\.regex\.example$/
+@@||allowed.example^
+||forced.example^$important
+||typed.example^$dnstype=A|AAAA
+||disabled.example^
+||disabled.example^$badfilter
+||unsupported.example^$client=office

@@ -1,0 +1,27 @@
+# dnsdist listener and trusted WireGuard network
+DNSDIST_WG_DNS_IP=10.68.0.1
+DNSDIST_WG_NETWORK=10.68.0.0/16
+DNSDIST_WG_INTERFACE=wg0
+
+# Downstream DNS servers
+DNSDIST_MIHOMO_ADDRESS=127.0.0.1:253
+DNSDIST_ALIDNS_1=223.5.5.5:53
+DNSDIST_ALIDNS_2=223.6.6.6:53
+
+# ECS prefixes derived from the current WireGuard peer endpoint
+DNSDIST_ECS_PREFIX_V4=24
+DNSDIST_ECS_PREFIX_V6=56
+# Set to 1 only when private/documentation endpoint addresses are intentional.
+DNSDIST_ECS_ALLOW_NON_GLOBAL=0
+
+# Comma-separated proxy-domain sources. Every source must download successfully.
+DNSDIST_PROXY_URLS=https://raw.githubusercontent.com/AfxMsgBox/MyRule/main/domain/myproxylist.txt,https://raw.githubusercontent.com/AfxMsgBox/MyRule/main/domain/gpt.txt,https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/gfw.txt,https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/tld-not-cn.txt
+DNSDIST_AD_URL=https://adguardteam.github.io/HostlistsRegistry/assets/filter_29.txt
+
+# Downloader limits
+DNSDIST_FETCH_TIMEOUT=30
+DNSDIST_MAX_DOWNLOAD_BYTES=52428800
+
+# Reject suspicious upstream format drift instead of replacing known-good rules.
+DNSDIST_MAX_AD_REGEX_RULES=2048
+DNSDIST_MAX_UNSUPPORTED_AD_RATIO=0.05

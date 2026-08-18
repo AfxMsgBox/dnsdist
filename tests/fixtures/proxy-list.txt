@@ -1,0 +1,12 @@
+payload:
+  - '+.example.com'
+  - '+.sub.example.com'
+  - '+.google.com'
+  - 'exact.example.net'
+  - '+.测试.example'
+  - 'DOMAIN-SUFFIX,suffix.example.org'
+  - 'DOMAIN,only.example.org'
+  - 'DOMAIN-REGEX,^(.+\.)?lowered.example.org$'
+  - 'DOMAIN-REGEX,^special-[0-9]+\.regex.example.org$'
+# ignored
+  - 'not a domain'
