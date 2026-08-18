@@ -97,7 +97,7 @@ sudo ./sh/install.sh
 4. 保留已存在的 `/etc/default/dnsdist-automation` 和生成规则。
 5. 下载域名列表并读取 `wg show wg-pub dump`。
 6. 运行 `dnsdist --check-config -C /etc/dnsdist/dnsdist.conf`。
-7. 启用 dnsdist 与两个 timer。
+7. 强制重启 dnsdist 以加载新配置，并启用两个 timer。
 
 脚本不会自动停用 AdGuard Home，也不会修改 WireGuard 或防火墙配置。
 

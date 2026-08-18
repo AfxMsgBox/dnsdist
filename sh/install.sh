@@ -153,7 +153,8 @@ systemctl daemon-reload
 /usr/local/sbin/update-dnsdist-ecs.py --no-check --no-reload
 
 dnsdist --check-config -C /etc/dnsdist/dnsdist.conf
-systemctl enable --now dnsdist.service
+systemctl enable dnsdist.service
+systemctl restart dnsdist.service
 systemctl enable --now \
   dnsdist-domain-update.timer \
   dnsdist-ecs-update.timer

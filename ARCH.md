@@ -293,7 +293,7 @@ tests/
   test_ecs.py                        Endpoint 与 ECS 映射测试
 ```
 
-安装器要求从完整 Git 仓库运行。写入系统前会验证仓库结构、`wg-pub` 接口和 `10.133.0.1` 监听地址，并从 `dnsdist.service` 自动识别运行用户组，以兼容使用 `_dnsdist` 或 `dnsdist` 账户的发行版。
+安装器要求从完整 Git 仓库运行。写入系统前会验证仓库结构、`wg-pub` 接口和 `10.133.0.1` 监听地址，并从 `dnsdist.service` 自动识别运行用户组，以兼容使用 `_dnsdist` 或 `dnsdist` 账户的发行版。生成文件和完整配置验证通过后，安装器会强制重启 dnsdist 以确保现有进程加载新配置，再启动两个 timer。
 
 安装后，Python 模块位于 `/usr/local/lib/dnsdist-automation`，命令入口位于 `/usr/local/sbin`，静态配置按 `sys/` 中的目录结构复制到 `/etc`。
 
