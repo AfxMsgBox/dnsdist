@@ -63,8 +63,8 @@ def atomic_write(path: Path, content: bytes, mode: int = 0o640) -> None:
             temporary_file.flush()
             os.fsync(temporary_file.fileno())
         os.chmod(temporary_path, mode)
-        # Preserve the installed root:dnsdist ownership. Without this, a root
-        # updater would replace a readable file with root:root mode 0640.
+        # Preserve the installed root:<dnsdist-service-group> ownership. Without
+        # this, a root updater would replace a readable file with root:root 0640.
         os.chown(temporary_path, ownership.st_uid, ownership.st_gid)
         os.replace(temporary_path, path)
         directory_fd = os.open(path.parent, os.O_RDONLY)

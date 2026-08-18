@@ -21,8 +21,8 @@
 ```mermaid
 flowchart LR
     Client["站点客户端"] --> SiteDNS["站点 DNS / 转发器"]
-    SiteDNS -->|"SNAT 为站点 WireGuard IP"| WG["WireGuard wg0"]
-    WG --> DNSDist["dnsdist 10.68.0.1:53"]
+    SiteDNS -->|"SNAT 为站点 WireGuard IP"| WG["WireGuard wg-pub"]
+    WG --> DNSDist["dnsdist 10.133.0.1:53"]
 
     DNSDist -->|"广告规则"| NX["NXDOMAIN"]
     DNSDist -->|"代理域名"| Mihomo["Mihomo 127.0.0.1:253"]
@@ -33,7 +33,7 @@ flowchart LR
     DomainUpdater --> DomainLua["domain-rules.lua"]
     DomainLua --> DNSDist
 
-    WGState["wg show wg0 dump"] --> ECSUpdater["ECS 更新器"]
+    WGState["wg show wg-pub dump"] --> ECSUpdater["ECS 更新器"]
     ECSUpdater --> ECSLua["ecs-rules.lua"]
     ECSLua --> DNSDist
 ```
@@ -173,7 +173,7 @@ important / allow / block / proxy
 更新器执行：
 
 ```bash
-wg show wg0 dump
+wg show wg-pub dump
 ```
 
 每个 Peer 行提供公钥、当前 Endpoint、AllowedIPs、最后握手时间和流量计数。当前实现使用：
@@ -188,7 +188,7 @@ wg show wg0 dump
 
 ```mermaid
 flowchart LR
-    Dump["wg show wg0 dump"] --> Parse["解析 Peer"]
+    Dump["wg show wg-pub dump"] --> Parse["解析 Peer"]
     Parse --> Endpoint{"Endpoint 是可接受地址？"}
     Endpoint -->|否| Skip["跳过该 Peer"]
     Endpoint -->|是| Prefix["公网 IP 归一化为 /24 或 /56"]
@@ -293,13 +293,15 @@ tests/
   test_ecs.py                        Endpoint 与 ECS 映射测试
 ```
 
+安装器要求从完整 Git 仓库运行。写入系统前会验证仓库结构、`wg-pub` 接口和 `10.133.0.1` 监听地址，并从 `dnsdist.service` 自动识别运行用户组，以兼容使用 `_dnsdist` 或 `dnsdist` 账户的发行版。
+
 安装后，Python 模块位于 `/usr/local/lib/dnsdist-automation`，命令入口位于 `/usr/local/sbin`，静态配置按 `sys/` 中的目录结构复制到 `/etc`。
 
 ## 10. 关键运行前提
 
 ### 10.1 查询源地址必须代表 Peer
 
-dnsdist 只能看到到达中央节点的查询源地址。各站点必须将 DNS 查询 SNAT 为自身的 WireGuard 地址，例如 `10.68.0.10`。如果中央节点看到的是站点内客户端的 `192.168.x.x` 地址，ECS 映射不会命中。
+dnsdist 只能看到到达中央节点的查询源地址。各站点必须将 DNS 查询 SNAT 为自身的 WireGuard 地址，例如 `10.133.0.10`。如果中央节点看到的是站点内客户端的 `192.168.x.x` 地址，ECS 映射不会命中。
 
 ### 10.2 Endpoint 表示最近认证来源
 

@@ -16,9 +16,9 @@ WireGuard 客户端 -> dnsdist :53
 
 | 参数 | 默认值 |
 | --- | --- |
-| WireGuard 接口 | `wg0` |
-| dnsdist 监听地址 | `10.68.0.1:53` |
-| WireGuard 网络 | `10.68.0.0/16` |
+| WireGuard 接口 | `wg-pub` |
+| dnsdist 监听地址 | `10.133.0.1:53` |
+| WireGuard 网络 | `10.133.0.0/24` |
 | Mihomo DNS | `127.0.0.1:253` |
 | AliDNS | `223.5.5.5:53`、`223.6.6.6:53` |
 | IPv4 / IPv6 ECS | `/24`、`/56` |
@@ -30,6 +30,7 @@ WireGuard 客户端 -> dnsdist :53
 ## 文件布局
 
 ```text
+ARCH.md
 sh/
   install.sh
   update-dnsdist-domains.py
@@ -52,8 +53,8 @@ tests/
 中央服务器必须把查询源地址识别为对应 Peer 的 WireGuard 地址，例如：
 
 ```text
-站点 A -> 10.68.0.10
-站点 B -> 10.68.0.11
+站点 A -> 10.133.0.10
+站点 B -> 10.133.0.2
 ```
 
 如果站点转发后仍显示为 `192.168.x.x` 等局域网客户端地址，Peer 到 ECS 的映射不会命中。各站点需要把发往中央 DNS 的 TCP/UDP 53 流量 SNAT 为自己的 WireGuard 地址。具体 nftables/iptables 规则取决于各站点接口与防火墙结构，本仓库不会自动修改防火墙。
@@ -61,11 +62,20 @@ tests/
 还需要确认：
 
 - Mihomo 已监听 `127.0.0.1:253`。
-- `10.68.0.1:53` 未被 AdGuard Home 或其他 DNS 服务占用。
+- `10.133.0.1:53` 未被 AdGuard Home 或其他 DNS 服务占用。
 - `/etc/dnsdist/dnsdist.yml` 不存在；dnsdist 2.1+ 可能优先加载它。
 - 目标系统使用 systemd，且已安装 Python 3、dnsdist、WireGuard 工具。
 
 ## 安装
+
+必须获取完整仓库，不能只下载 `install.sh`：
+
+```bash
+apt-get update
+apt-get install -y git
+git clone https://github.com/AfxMsgBox/dnsdist.git
+cd dnsdist
+```
 
 先检查并修改默认参数，然后执行：
 
@@ -81,11 +91,13 @@ sudo ./sh/install.sh
 
 安装脚本会：
 
-1. 复制配置、Python 模块、更新器和 systemd 单元。
-2. 保留已存在的 `/etc/default/dnsdist-automation` 和生成规则。
-3. 下载域名列表并读取 `wg show wg0 dump`。
-4. 运行 `dnsdist --check-config -C /etc/dnsdist/dnsdist.conf`。
-5. 启用 dnsdist 与两个 timer。
+1. 验证仓库结构、WireGuard 接口和监听地址。
+2. 自动识别系统中 dnsdist 服务的运行用户组。
+3. 复制配置、Python 模块、更新器和 systemd 单元。
+4. 保留已存在的 `/etc/default/dnsdist-automation` 和生成规则。
+5. 下载域名列表并读取 `wg show wg-pub dump`。
+6. 运行 `dnsdist --check-config -C /etc/dnsdist/dnsdist.conf`。
+7. 启用 dnsdist 与两个 timer。
 
 脚本不会自动停用 AdGuard Home，也不会修改 WireGuard 或防火墙配置。
 
@@ -154,9 +166,9 @@ systemctl list-timers 'dnsdist-*'
 测试请求：
 
 ```bash
-dig @10.68.0.1 00px.net
-dig @10.68.0.1 google.com
-dig @10.68.0.1 qq.com
+dig @10.133.0.1 00px.net
+dig @10.133.0.1 google.com
+dig @10.133.0.1 qq.com
 ```
 
 查看实际 ECS 映射：

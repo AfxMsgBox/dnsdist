@@ -186,10 +186,10 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_argument_parser().parse_args(argv)
-    interface = os.getenv("DNSDIST_WG_INTERFACE", "wg0")
+    interface = os.getenv("DNSDIST_WG_INTERFACE", "wg-pub")
     try:
         wg_network = ipaddress.ip_network(
-            os.getenv("DNSDIST_WG_NETWORK", "10.68.0.0/16"),
+            os.getenv("DNSDIST_WG_NETWORK", "10.133.0.0/24"),
             strict=False,
         )
         prefix_v4 = int(os.getenv("DNSDIST_ECS_PREFIX_V4", "24"))
