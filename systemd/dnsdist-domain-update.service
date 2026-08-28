@@ -5,15 +5,16 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-EnvironmentFile=-/etc/default/dnsdist-automation
-ExecStart=/usr/local/sbin/update-dnsdist-domains.py
+EnvironmentFile=-@INSTALL_DIR@/config/dnsdist-automation
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=@INSTALL_DIR@/sh/update-dnsdist-domains.py
 User=root
 Group=root
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/etc/dnsdist/generated /run/lock
+ReadWritePaths=@INSTALL_DIR@/generated
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

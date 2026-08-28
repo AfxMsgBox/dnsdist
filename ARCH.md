@@ -43,7 +43,7 @@ flowchart LR
 - 域名规则流水线负责“查询什么域名时采取什么动作”。
 - ECS 流水线负责“来自哪个 WireGuard 地址的查询使用哪个公网网段”。
 
-两个流水线最终都生成 Lua 文件，由主配置 `/etc/dnsdist/dnsdist.conf` 加载。
+两个流水线最终都在集中安装目录中生成 Lua 文件，由 `config/dnsdist.conf` 加载。默认安装根目录为 `/opt/mydnsdist`，也可在首次安装时选择其他绝对路径。
 
 ## 3. DNS 查询处理顺序
 
@@ -155,7 +155,7 @@ Clash 规则按类型转换：
 输出文件为：
 
 ```text
-/etc/dnsdist/generated/domain-rules.lua
+${DNSDIST_INSTALL_DIR}/generated/domain-rules.lua
 ```
 
 文件返回一个局部 Lua 表：
@@ -232,7 +232,7 @@ WireGuard 是无连接协议，没有稳定的单 Peer 连接、断开或 Endpoi
 两个 oneshot Service 共用：
 
 ```text
-/etc/default/dnsdist-automation
+${DNSDIST_INSTALL_DIR}/config/dnsdist-automation
 ```
 
 服务采用 systemd 沙箱限制，只允许写入生成目录和锁目录。两个更新器分别使用独立文件锁，防止同类任务并发覆盖。
@@ -266,36 +266,74 @@ sequenceDiagram
 
 原子写入保留目标文件所有者和权限，避免由 root 运行的更新器生成 dnsdist 用户不可读的文件。完整主配置验证通过后才保留新规则；验证或重载失败时恢复旧内容。
 
-## 9. 部署结构
+## 9. 部署、更新与目录结构
 
-仓库目录与目标系统目录的对应关系：
+仓库根目录与集中安装目录一一对应：
 
 ```text
-sh/
-  install.sh                         部署入口
-  update-dnsdist-domains.py          域名更新命令入口
-  update-dnsdist-ecs.py              ECS 更新命令入口
-  dnsdist_automation/
-    common.py                        锁、原子写入、验证、回滚
-    domains.py                       域名解析、优化和 Lua 生成
-    ecs.py                           WireGuard 状态解析和 ECS Lua 生成
+config/
+  dnsdist-automation                  本机运行参数
+  dnsdist.conf                        dnsdist 主策略
 
-sys/etc/
-  default/dnsdist-automation         统一环境参数
-  dnsdist/dnsdist.conf               dnsdist 主策略
-  dnsdist/generated/                 安全占位生成文件
-  systemd/system/                    Service、Timer 和 dnsdist drop-in
+generated/
+  domain-rules.lua                    域名规则与安全占位
+  ecs-rules.lua                       ECS 映射与安全占位
+
+sh/
+  install.sh                          单文件引导与部署入口
+  install-common.sh                   安装和更新公共函数
+  manage-config.py                    参数提示、验证与合并
+  update.sh                           无 Git 原子更新入口
+  uninstall.sh                        安全卸载入口
+  update-dnsdist-domains.py           域名更新命令入口
+  update-dnsdist-ecs.py               ECS 更新命令入口
+  dnsdist_automation/
+    common.py                         锁、原子写入、验证、回滚
+    domains.py                        域名解析、优化和 Lua 生成
+    ecs.py                            WireGuard 状态解析和 ECS Lua 生成
+
+systemd/
+  10-dnsdist-automation.conf          dnsdist 环境变量 drop-in
+  dnsdist-*-update.service            更新服务
+  dnsdist-*-update.timer              更新定时器
 
 tests/
-  fixtures/                          离线输入样例
-  test_common.py                     激活与回滚测试
-  test_domains.py                    域名语义与优化测试
-  test_ecs.py                        Endpoint 与 ECS 映射测试
+  fixtures/                           离线输入样例
+  test_common.py                      激活与回滚测试
+  test_domains.py                     域名语义与优化测试
+  test_ecs.py                         Endpoint 与 ECS 映射测试
+  test_install.py                     单文件安装与目录检查
+  test_manage_config.py               参数合并与校验测试
+  test_update.py                      压缩包更新机制检查
+  test_uninstall.py                   卸载边界与预览模式测试
 ```
 
-安装器要求从完整 Git 仓库运行。写入系统前会验证仓库结构、`wg-pub` 接口和 `10.133.0.1` 监听地址，并从 `dnsdist.service` 自动识别运行用户组，以兼容使用 `_dnsdist` 或 `dnsdist` 账户的发行版。生成文件和完整配置验证通过后，安装器会强制重启 dnsdist 以确保现有进程加载新配置，再启动两个 timer。
+### 9.1 单文件引导安装
 
-安装后，Python 模块位于 `/usr/local/lib/dnsdist-automation`，命令入口位于 `/usr/local/sbin`，静态配置按 `sys/` 中的目录结构复制到 `/etc`。
+独立下载的 `install.sh` 内置最小引导逻辑。它提示安装目录，优先用 `wget`、回退到 `curl` 下载 GitHub `main` 分支压缩包；下载工具、dnsdist、WireGuard 工具、Python 3 等缺失时，在支持 `apt` 的系统上自动安装。完整压缩包解压到安装目录后，再执行其中的完整安装器。
+
+安装器逐项提示模板中的全部运行参数，并验证监听地址、网络、接口名、上游地址、URL 和阈值。写入系统前还会验证目录结构、WireGuard 接口和监听地址，并从 `dnsdist.service` 自动识别运行组，以兼容 `_dnsdist` 或 `dnsdist` 账户。
+
+项目文件不再复制到 `/usr/local`、`/etc/default` 或 `/etc/dnsdist/generated`。系统目录只保留下列集成软链接：
+
+- `/etc/dnsdist/dnsdist.conf` 指向安装目录中的主配置。
+- `/etc/systemd/system` 中的更新单元指向安装目录中的 `systemd/`。
+- dnsdist drop-in 指向安装目录中的环境文件。
+
+### 9.2 无 Git 更新与回滚
+
+`update.sh` 下载完整压缩包并计算 SHA-256；与 `.source-sha256` 相同时直接结束。新包先在安装目录同一文件系统的临时目录中完成以下预检：
+
+1. 验证必须文件、Shell 语法和 Python 编译。
+2. 以新版模板为基准，保留现有本机值并补充新增参数。
+3. 保留当前生成规则与 dnsdist 供应商配置备份。
+4. 渲染实际安装路径，运行离线测试和 dnsdist 配置检查。
+
+预检通过后停止 timer 与 dnsdist，通过同文件系统目录重命名切换版本，再生成最新规则并启动服务。任一步失败都会把旧目录移回原路径并尝试恢复服务。成功后删除临时旧版本。
+
+### 9.3 卸载边界
+
+卸载器先停止并禁用 timer 与 dnsdist，只移除目标确实指向当前安装目录的系统软链接，并在存在时恢复 dnsdist 软件包原配置。默认保留集中安装目录；`--purge` 才删除整个安装根目录。卸载器不移除系统软件包，也不修改 WireGuard、Mihomo 或防火墙。
 
 ## 10. 关键运行前提
 

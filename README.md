@@ -25,28 +25,44 @@ WireGuard 客户端 -> dnsdist :53
 | 域名更新时间 | 每 6 小时 |
 | Endpoint 检查间隔 | 60 秒 |
 
-修改 [`sys/etc/default/dnsdist-automation`](sys/etc/default/dnsdist-automation) 可以覆盖这些参数。dnsdist 和两个更新服务共用该环境文件。
+安装时会逐项提示全部参数，直接回车即可使用默认值。安装后的本机参数位于 `/opt/mydnsdist/config/dnsdist-automation`；dnsdist 和两个更新服务共用该文件。
 
 ## 文件布局
 
 ```text
 ARCH.md
+TODO.md
+config/
+  dnsdist-automation
+  dnsdist.conf
+generated/
+  domain-rules.lua
+  ecs-rules.lua
 sh/
   install.sh
+  install-common.sh
+  manage-config.py
+  uninstall.sh
+  update.sh
   update-dnsdist-domains.py
   update-dnsdist-ecs.py
   dnsdist_automation/
-sys/
-  etc/
-    default/dnsdist-automation
-    dnsdist/
-      dnsdist.conf
-      generated/
-    systemd/system/
+systemd/
+  10-dnsdist-automation.conf
+  dnsdist-domain-update.service
+  dnsdist-domain-update.timer
+  dnsdist-ecs-update.service
+  dnsdist-ecs-update.timer
 tests/
+  test_install.py
+  test_manage_config.py
+  test_uninstall.py
+  test_update.py
 ```
 
-`sh/` 存放部署和运行脚本，`sys/` 按目标系统目录组织静态配置。两个 `generated/*.lua` 是安全占位文件，安装后由更新器原子替换，不应手工编辑。
+仓库根目录与安装目录一一对应，默认完整安装到 `/opt/mydnsdist`。`sh/` 存放部署和运行脚本，`config/` 保存本机配置，`generated/` 保存运行时规则，`systemd/` 保存服务单元。两个 `generated/*.lua` 初始为安全占位文件，安装后由更新器原子替换，不应手工编辑。
+
+系统目录仅保留必要的软链接：dnsdist 主配置链接到安装目录，systemd 单元链接到 `systemd/`。项目文件不会复制到 `/usr/local`、`/etc/default` 或其他分散目录。
 
 ## 关键前提
 
@@ -68,38 +84,72 @@ tests/
 
 ## 安装
 
-必须获取完整仓库，不能只下载 `install.sh`：
+只需下载一个安装脚本，不需要安装 Git：
 
 ```bash
-apt-get update
-apt-get install -y git
-git clone https://github.com/AfxMsgBox/dnsdist.git
-cd dnsdist
+wget -O install.sh https://raw.githubusercontent.com/AfxMsgBox/dnsdist/main/sh/install.sh
+sudo bash install.sh
 ```
 
-先检查并修改默认参数，然后执行：
+安装脚本默认建议使用 `/opt/mydnsdist`，并依次提示本机参数。直接回车使用默认值，也可以输入其他不含空白字符的绝对安装路径。非交互安装使用：
 
 ```bash
-sudo ./sh/install.sh --install-packages
+sudo bash install.sh --non-interactive
 ```
 
-如果依赖已经安装：
+安装脚本会优先使用 `wget` 下载 GitHub `main` 分支压缩包，没有 `wget` 时回退到 `curl`；两者都没有时自动安装 `wget`。在 Debian/Ubuntu 上，缺少 dnsdist、WireGuard 工具、Python 3 或其他基础依赖时会通过 `apt` 自动安装。
 
-```bash
-sudo ./sh/install.sh
-```
+安装过程会：
 
-安装脚本会：
-
-1. 验证仓库结构、WireGuard 接口和监听地址。
-2. 自动识别系统中 dnsdist 服务的运行用户组。
-3. 复制配置、Python 模块、更新器和 systemd 单元。
-4. 保留已存在的 `/etc/default/dnsdist-automation` 和生成规则。
-5. 下载域名列表并读取 `wg show wg-pub dump`。
-6. 运行 `dnsdist --check-config -C /etc/dnsdist/dnsdist.conf`。
-7. 强制重启 dnsdist 以加载新配置，并启用两个 timer。
+1. 提示并建立集中安装目录。
+2. 自动补齐缺少的软件包。
+3. 下载并检查完整源码压缩包。
+4. 提示全部运行参数并验证地址、网络、端口和阈值。
+5. 自动识别 dnsdist 服务运行组并设置权限。
+6. 只在系统目录建立必要软链接。
+7. 下载域名列表并读取 `wg show wg-pub dump`。
+8. 检查完整 dnsdist 配置，启动 dnsdist 和两个 timer。
 
 脚本不会自动停用 AdGuard Home，也不会修改 WireGuard 或防火墙配置。
+
+## 更新
+
+更新不依赖 Git，会重新下载 GitHub 压缩包：
+
+```bash
+sudo /opt/mydnsdist/sh/update.sh
+```
+
+更新器先在同一文件系统的临时目录中验证脚本、Python 代码、离线测试和 dnsdist 配置，再切换安装目录。本机 `config/dnsdist-automation` 中的已有值与当前生成规则会保留，新版本增加的参数会使用新版默认值自动补充。服务启动失败时自动恢复上一版本。
+
+如需更新时重新逐项确认参数：
+
+```bash
+sudo /opt/mydnsdist/sh/update.sh --configure
+```
+
+## 卸载
+
+默认卸载会停止并禁用 dnsdist 及本项目的更新定时器，移除系统软链接，但保留集中安装目录：
+
+```bash
+sudo ./sh/uninstall.sh
+```
+
+如需同时删除完整集中安装目录：
+
+```bash
+sudo ./sh/uninstall.sh --purge
+```
+
+执行前可预览全部操作；预览模式不要求 root 权限：
+
+```bash
+./sh/uninstall.sh --dry-run
+./sh/uninstall.sh --purge --dry-run
+```
+
+卸载脚本不会卸载 dnsdist、WireGuard、Python 或 Mihomo 软件包，也不会修改 WireGuard 和防火墙。`--purge` 会删除运行该脚本所在的完整安装目录，因此不要在安装目录中存放无关文件。
 
 ## 规则来源
 
@@ -153,10 +203,10 @@ DNSDIST_ECS_ALLOW_NON_GLOBAL=1
 ## 手动检查
 
 ```bash
-sudo /usr/local/sbin/update-dnsdist-domains.py
-sudo /usr/local/sbin/update-dnsdist-domains.py --stats-only
-sudo /usr/local/sbin/update-dnsdist-ecs.py
-sudo dnsdist --check-config -C /etc/dnsdist/dnsdist.conf
+sudo /opt/mydnsdist/sh/update-dnsdist-domains.py
+sudo /opt/mydnsdist/sh/update-dnsdist-domains.py --stats-only
+sudo /opt/mydnsdist/sh/update-dnsdist-ecs.py
+sudo dnsdist --check-config -C /opt/mydnsdist/config/dnsdist.conf
 systemctl status dnsdist
 systemctl list-timers 'dnsdist-*'
 ```
@@ -174,7 +224,7 @@ dig @10.133.0.1 qq.com
 查看实际 ECS 映射：
 
 ```bash
-sudo sed -n '1,240p' /etc/dnsdist/generated/ecs-rules.lua
+sudo sed -n '1,240p' /opt/mydnsdist/generated/ecs-rules.lua
 ```
 
 ## 开发测试
@@ -184,6 +234,7 @@ sudo sed -n '1,240p' /etc/dnsdist/generated/ecs-rules.lua
 ```bash
 python3 -m unittest discover -s tests -v
 python3 -m compileall -q sh tests
+bash -n sh/install.sh sh/install-common.sh sh/update.sh sh/uninstall.sh
 ```
 
 dnsdist 配置接口参考：[SuffixMatchNode 与服务器配置](https://www.dnsdist.org/reference/config.html)、[规则选择器](https://www.dnsdist.org/reference/selectors.html)、[ECS Action](https://www.dnsdist.org/reference/actions.html)、[配置检查](https://www.dnsdist.org/manpages/dnsdist.1.html)。

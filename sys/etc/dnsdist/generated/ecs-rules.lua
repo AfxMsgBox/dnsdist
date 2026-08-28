@@ -1,2 +1,0 @@
--- Managed by update-dnsdist-ecs.py.
--- No WireGuard peer-to-ECS mapping has been generated yet.

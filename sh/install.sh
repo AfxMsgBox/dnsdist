@@ -1,162 +1,242 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+DEFAULT_INSTALL_DIR=/opt/mydnsdist
+DEFAULT_ARCHIVE_URL=https://github.com/AfxMsgBox/dnsdist/archive/refs/heads/main.tar.gz
+
 usage() {
   printf '%s\n' \
-    'Usage: sudo ./sh/install.sh [--install-packages]' \
+    '用法：sudo ./install.sh [选项]' \
     '' \
-    'Copies the repository files into /etc and /usr/local, generates the' \
-    'initial rules, validates dnsdist.conf, and enables the timers.'
+    '仅下载本文件即可完成依赖安装、完整代码下载、参数配置和服务启动。' \
+    '' \
+    '选项：' \
+    '  --install-dir PATH   安装目录，默认 /opt/mydnsdist' \
+    '  --non-interactive    不询问参数，使用现有值或仓库默认值' \
+    '  --archive-url URL    覆盖 GitHub 源码压缩包地址' \
+    '  -h, --help           显示帮助'
 }
 
-install_packages=0
-case "${1:-}" in
-  "") ;;
-  --install-packages) install_packages=1 ;;
-  -h|--help) usage; exit 0 ;;
-  *) usage >&2; exit 2 ;;
-esac
+install_dir=''
+archive_url=${DNSDIST_ARCHIVE_URL:-${DEFAULT_ARCHIVE_URL}}
+non_interactive=0
+deploy_only=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --install-dir)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      install_dir=$2
+      shift 2
+      ;;
+    --non-interactive) non_interactive=1; shift ;;
+    --archive-url)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      archive_url=$2
+      shift 2
+      ;;
+    --deploy-only) deploy_only=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
 
 if [[ ${EUID} -ne 0 ]]; then
-  printf '%s\n' 'install.sh must run as root' >&2
+  printf '%s\n' '错误：必须使用 root 权限运行安装脚本' >&2
   exit 1
 fi
 
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-repository_dir="$(cd -- "${script_dir}/.." && pwd)"
-system_tree="${repository_dir}/sys"
-defaults_file="${system_tree}/etc/default/dnsdist-automation"
-effective_defaults_file="${defaults_file}"
-if [[ -e /etc/default/dnsdist-automation ]]; then
-  effective_defaults_file=/etc/default/dnsdist-automation
-fi
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+source_root=$(cd -- "${script_dir}/.." && pwd)
+common_file=${script_dir}/install-common.sh
 
-required_paths=(
-  "${defaults_file}"
-  "${system_tree}/etc/dnsdist/dnsdist.conf"
-  "${system_tree}/etc/dnsdist/generated/domain-rules.lua"
-  "${system_tree}/etc/dnsdist/generated/ecs-rules.lua"
-  "${system_tree}/etc/systemd/system/dnsdist-domain-update.service"
-  "${system_tree}/etc/systemd/system/dnsdist-ecs-update.service"
-  "${script_dir}/dnsdist_automation/common.py"
-  "${script_dir}/dnsdist_automation/domains.py"
-  "${script_dir}/dnsdist_automation/ecs.py"
-  "${script_dir}/update-dnsdist-domains.py"
-  "${script_dir}/update-dnsdist-ecs.py"
-)
-for required_path in "${required_paths[@]}"; do
-  if [[ ! -e ${required_path} ]]; then
-    printf '%s\n' \
-      'incomplete repository: required project files are missing.' \
-      'Clone the complete repository and run ./sh/install.sh from that checkout.' >&2
-    exit 1
+if [[ -z ${install_dir} ]]; then
+  install_dir=${DEFAULT_INSTALL_DIR}
+  if [[ ${non_interactive} -eq 0 && -t 0 ]]; then
+    read -r -p "安装目录 [${DEFAULT_INSTALL_DIR}]: " entered_dir
+    install_dir=${entered_dir:-${DEFAULT_INSTALL_DIR}}
   fi
+fi
+while [[ ${install_dir} != / && ${install_dir} == */ ]]; do
+  install_dir=${install_dir%/}
 done
 
-if [[ ${install_packages} -eq 1 ]]; then
-  apt-get update
-  apt-get install -y dnsdist wireguard-tools python3
-fi
-
-for command in dnsdist ip wg python3 systemctl install; do
-  if ! command -v "${command}" >/dev/null 2>&1; then
-    printf 'required command is missing: %s\n' "${command}" >&2
+# A standalone copy has no supporting files yet. Bootstrap with wget/curl,
+# unpack the repository snapshot, then execute the complete installer.
+if [[ ! -f ${common_file} ]]; then
+  [[ ${install_dir} =~ ^/[A-Za-z0-9._/-]+$ && ${install_dir} != / && ${install_dir} != *//* ]] || {
+    printf '%s\n' '错误：安装目录必须是仅包含安全字符的绝对路径' >&2
+    exit 1
+  }
+  case "${install_dir}" in
+    /|/bin|/boot|/dev|/etc|/home|/lib|/lib64|/opt|/proc|/root|/run|/sbin|/srv|/sys|/tmp|/usr|/var)
+      printf '错误：安装目录范围过大：%s\n' "${install_dir}" >&2
+      exit 1
+      ;;
+  esac
+  [[ ${install_dir} != *'/../'* && ${install_dir} != */.. && ${install_dir} != *'/./'* ]] || {
+    printf '%s\n' '错误：安装目录不能包含 . 或 .. 路径段' >&2
+    exit 1
+  }
+  bootstrap_packages=()
+  if ! command -v wget >/dev/null 2>&1 && ! command -v curl >/dev/null 2>&1; then
+    bootstrap_packages+=(wget ca-certificates)
+  fi
+  command -v tar >/dev/null 2>&1 || bootstrap_packages+=(tar)
+  command -v sha256sum >/dev/null 2>&1 || bootstrap_packages+=(coreutils)
+  if [[ ${#bootstrap_packages[@]} -gt 0 ]]; then
+    command -v apt-get >/dev/null 2>&1 || {
+      printf '错误：缺少引导安装依赖，且当前系统不支持 apt：%s\n' \
+        "${bootstrap_packages[*]}" >&2
+      exit 1
+    }
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y "${bootstrap_packages[@]}"
+  fi
+  temporary_dir=$(mktemp -d)
+  trap 'rm -rf -- "${temporary_dir}"' EXIT
+  archive=${temporary_dir}/dnsdist.tar.gz
+  extracted=${temporary_dir}/source
+  if command -v wget >/dev/null 2>&1; then
+    wget --quiet --timeout=30 --tries=3 --output-document="${archive}" "${archive_url}"
+  else
+    curl --fail --location --silent --show-error \
+      --connect-timeout 30 --retry 3 --output "${archive}" "${archive_url}"
+  fi
+  mkdir -p "${extracted}"
+  tar -xzf "${archive}" --strip-components=1 -C "${extracted}"
+  [[ -f ${extracted}/sh/install-common.sh ]] || {
+    printf '%s\n' '错误：下载的软件包结构不完整' >&2
+    exit 1
+  }
+  if [[ -e ${install_dir} ]] && \
+    [[ -n $(find "${install_dir}" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null) ]]; then
+    printf '错误：安装目录不是空目录：%s\n' "${install_dir}" >&2
     exit 1
   fi
-done
+  mkdir -p "$(dirname -- "${install_dir}")"
+  rmdir "${install_dir}" 2>/dev/null || true
+  mv "${extracted}" "${install_dir}"
+  sha256sum "${archive}" | awk '{print $1}' > "${install_dir}/.source-sha256"
+  arguments=(--deploy-only --install-dir "${install_dir}" --archive-url "${archive_url}")
+  [[ ${non_interactive} -eq 1 ]] && arguments+=(--non-interactive)
+  exec "${install_dir}/sh/install.sh" "${arguments[@]}"
+fi
 
-# Load the same defaults that will be installed for the services, so all
-# deployment-specific prerequisites are checked before changing system files.
-set -a
 # shellcheck disable=SC1090
-source "${effective_defaults_file}"
-set +a
+source "${common_file}"
+require_root
+validate_install_dir "${install_dir}"
+ensure_dependencies
+
+if [[ ${deploy_only} -eq 0 && ${source_root} != "${install_dir}" ]]; then
+  if [[ -e ${install_dir} ]] && \
+    [[ -n $(find "${install_dir}" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null) ]]; then
+    die "安装目录不是空目录：${install_dir}"
+  fi
+  mkdir -p "${install_dir}"
+  for item in ARCH.md README.md TODO.md config generated sh systemd tests; do
+    cp -a "${source_root}/${item}" "${install_dir}/"
+  done
+  arguments=(--deploy-only --install-dir "${install_dir}" --archive-url "${archive_url}")
+  [[ ${non_interactive} -eq 1 ]] && arguments+=(--non-interactive)
+  exec "${install_dir}/sh/install.sh" "${arguments[@]}"
+fi
+
+source_root=${install_dir}
+validate_source "${source_root}"
+
+config_file=${source_root}/config/dnsdist-automation
+config_arguments=(
+  --template "${config_file}"
+  --current "${config_file}"
+  --output "${config_file}"
+  --install-dir "${source_root}"
+)
+if [[ ${non_interactive} -eq 0 && -t 0 ]]; then
+  printf '%s\n' '请确认 dnsdist 运行参数；直接回车使用方括号中的默认值。'
+  config_arguments+=(--interactive)
+fi
+python3 "${source_root}/sh/manage-config.py" "${config_arguments[@]}"
+load_local_config "${source_root}"
 
 if ! wg show "${DNSDIST_WG_INTERFACE}" >/dev/null 2>&1; then
-  printf 'WireGuard interface is unavailable: %s\n' "${DNSDIST_WG_INTERFACE}" >&2
-  exit 1
+  die "WireGuard 接口不可用：${DNSDIST_WG_INTERFACE}"
 fi
-
 if ! ip -o address show | awk '{print $4}' | cut -d/ -f1 | \
   grep -Fqx -- "${DNSDIST_WG_DNS_IP}"; then
-  printf 'dnsdist listener address is not assigned locally: %s\n' \
-    "${DNSDIST_WG_DNS_IP}" >&2
-  exit 1
+  die "dnsdist 监听地址尚未分配到本机：${DNSDIST_WG_DNS_IP}"
 fi
 
-dnsdist_user="$(systemctl show dnsdist.service --property=User --value 2>/dev/null || true)"
-dnsdist_group="$(systemctl show dnsdist.service --property=Group --value 2>/dev/null || true)"
+dnsdist_user=$(systemctl show dnsdist.service --property=User --value 2>/dev/null || true)
+dnsdist_group=$(systemctl show dnsdist.service --property=Group --value 2>/dev/null || true)
 if [[ -z ${dnsdist_user} ]]; then
   for candidate in _dnsdist dnsdist; do
     if id "${candidate}" >/dev/null 2>&1; then
-      dnsdist_user="${candidate}"
+      dnsdist_user=${candidate}
       break
     fi
   done
 fi
 if [[ -z ${dnsdist_group} && -n ${dnsdist_user} ]]; then
-  dnsdist_group="$(id -gn "${dnsdist_user}")"
+  dnsdist_group=$(id -gn "${dnsdist_user}")
 fi
 if [[ -z ${dnsdist_group} ]] || ! getent group "${dnsdist_group}" >/dev/null; then
-  printf '%s\n' 'unable to determine the dnsdist service group' >&2
-  exit 1
+  die '无法识别 dnsdist 服务运行组'
 fi
 
 if [[ -e /etc/dnsdist/dnsdist.yml ]]; then
-  printf '%s\n' \
-    '/etc/dnsdist/dnsdist.yml exists and may take precedence over the Lua config.' \
-    'Move or merge it deliberately before running this installer.' >&2
-  exit 1
+  die '/etc/dnsdist/dnsdist.yml 可能优先于 Lua 配置，请先明确处理该文件'
 fi
 
-install -d -m 2750 -o root -g "${dnsdist_group}" /etc/dnsdist/generated
-install -d -m 0755 /etc/systemd/system/dnsdist.service.d
-install -d -m 0755 /usr/local/lib/dnsdist-automation/dnsdist_automation
+chmod 0755 "${source_root}" "${source_root}/sh"
+chmod 0755 "${source_root}"/sh/*.sh "${source_root}"/sh/*.py
+chmod 0644 "${source_root}"/sh/dnsdist_automation/*.py
+install -d -m 0750 -o root -g "${dnsdist_group}" "${source_root}/config"
+install -d -m 2750 -o root -g "${dnsdist_group}" "${source_root}/generated"
+chown root:"${dnsdist_group}" \
+  "${source_root}/config/dnsdist.conf" \
+  "${source_root}/config/dnsdist-automation" \
+  "${source_root}/generated/domain-rules.lua" \
+  "${source_root}/generated/ecs-rules.lua"
+chmod 0640 \
+  "${source_root}/config/dnsdist.conf" \
+  "${source_root}/config/dnsdist-automation" \
+  "${source_root}/generated/domain-rules.lua" \
+  "${source_root}/generated/ecs-rules.lua"
 
-install -m 0640 -o root -g "${dnsdist_group}" \
-  "${system_tree}/etc/dnsdist/dnsdist.conf" \
-  /etc/dnsdist/dnsdist.conf
+render_systemd_units "${source_root}"
+chmod 0644 "${source_root}"/systemd/*
 
-if [[ ! -e /etc/default/dnsdist-automation ]]; then
-  install -m 0644 \
-    "${system_tree}/etc/default/dnsdist-automation" \
-    /etc/default/dnsdist-automation
-fi
-
-for seed in domain-rules.lua ecs-rules.lua; do
-  if [[ ! -e "/etc/dnsdist/generated/${seed}" ]]; then
-    install -m 0640 -o root -g "${dnsdist_group}" \
-      "${system_tree}/etc/dnsdist/generated/${seed}" \
-      "/etc/dnsdist/generated/${seed}"
+install -d -m 0755 /etc/dnsdist /etc/systemd/system/dnsdist.service.d
+if [[ -e /etc/dnsdist/dnsdist.conf && ! -L /etc/dnsdist/dnsdist.conf ]]; then
+  if [[ ! -e ${source_root}/config/vendor-dnsdist.conf.backup ]]; then
+    mv /etc/dnsdist/dnsdist.conf "${source_root}/config/vendor-dnsdist.conf.backup"
+  else
+    die '/etc/dnsdist/dnsdist.conf 已存在，且供应商配置备份也已存在'
   fi
+fi
+safe_managed_link "${source_root}/config/dnsdist.conf" /etc/dnsdist/dnsdist.conf
+safe_managed_link \
+  "${source_root}/systemd/10-dnsdist-automation.conf" \
+  /etc/systemd/system/dnsdist.service.d/10-dnsdist-automation.conf
+for unit in \
+  dnsdist-domain-update.service \
+  dnsdist-domain-update.timer \
+  dnsdist-ecs-update.service \
+  dnsdist-ecs-update.timer; do
+  safe_managed_link \
+    "${source_root}/systemd/${unit}" \
+    "/etc/systemd/system/${unit}"
 done
 
-install -m 0644 "${script_dir}"/dnsdist_automation/*.py \
-  /usr/local/lib/dnsdist-automation/dnsdist_automation/
-install -m 0755 "${script_dir}/update-dnsdist-domains.py" \
-  /usr/local/sbin/update-dnsdist-domains.py
-install -m 0755 "${script_dir}/update-dnsdist-ecs.py" \
-  /usr/local/sbin/update-dnsdist-ecs.py
-
-install -m 0644 \
-  "${system_tree}/etc/systemd/system/dnsdist.service.d/10-dnsdist-automation.conf" \
-  /etc/systemd/system/dnsdist.service.d/10-dnsdist-automation.conf
-install -m 0644 "${system_tree}"/etc/systemd/system/dnsdist-*-update.service \
-  "${system_tree}"/etc/systemd/system/dnsdist-*-update.timer \
-  /etc/systemd/system/
-
 systemctl daemon-reload
-
-# Build both generated files before dnsdist starts. The first command requires
-# network access; the second requires a configured WireGuard interface.
-/usr/local/sbin/update-dnsdist-domains.py --no-check --no-reload
-/usr/local/sbin/update-dnsdist-ecs.py --no-check --no-reload
-
-dnsdist --check-config -C /etc/dnsdist/dnsdist.conf
+"${source_root}/sh/update-dnsdist-domains.py" --no-check --no-reload
+"${source_root}/sh/update-dnsdist-ecs.py" --no-check --no-reload
+dnsdist --check-config -C "${source_root}/config/dnsdist.conf"
 systemctl enable dnsdist.service
 systemctl restart dnsdist.service
 systemctl enable --now \
   dnsdist-domain-update.timer \
   dnsdist-ecs-update.timer
 
-printf '%s\n' 'dnsdist policy gateway installed successfully'
+printf 'dnsdist 策略网关安装成功：%s\n' "${source_root}"

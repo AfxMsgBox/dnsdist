@@ -10,3 +10,4 @@ Unit=dnsdist-domain-update.service
 
 [Install]
 WantedBy=timers.target
+

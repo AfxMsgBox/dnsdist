@@ -12,9 +12,10 @@ from typing import Iterable, Sequence
 from .common import activate_generated_file, env_bool, exclusive_lock
 
 
-DEFAULT_TARGET = Path("/etc/dnsdist/generated/ecs-rules.lua")
-DEFAULT_MAIN_CONFIG = Path("/etc/dnsdist/dnsdist.conf")
-DEFAULT_LOCK = Path("/run/lock/dnsdist-ecs-update.lock")
+DEFAULT_INSTALL_DIR = Path(os.getenv("DNSDIST_INSTALL_DIR", "/opt/mydnsdist"))
+DEFAULT_TARGET = DEFAULT_INSTALL_DIR / "generated/ecs-rules.lua"
+DEFAULT_MAIN_CONFIG = DEFAULT_INSTALL_DIR / "config/dnsdist.conf"
+DEFAULT_LOCK = DEFAULT_INSTALL_DIR / "generated/.ecs-update.lock"
 
 
 @dataclass(frozen=True)
@@ -172,7 +173,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path(os.getenv("DNSDIST_MAIN_CONFIG", str(DEFAULT_MAIN_CONFIG))),
     )
-    parser.add_argument("--lock-file", type=Path, default=DEFAULT_LOCK)
+    parser.add_argument(
+        "--lock-file",
+        type=Path,
+        default=Path(os.getenv("DNSDIST_ECS_LOCK", str(DEFAULT_LOCK))),
+    )
     parser.add_argument(
         "--dump-file",
         type=Path,

@@ -9,3 +9,4 @@ Unit=dnsdist-ecs-update.service
 
 [Install]
 WantedBy=timers.target
+

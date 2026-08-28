@@ -1,3 +1,6 @@
+# Installation root. install.sh keeps this value synchronized automatically.
+DNSDIST_INSTALL_DIR=/opt/mydnsdist
+
 # dnsdist listener and trusted WireGuard network
 DNSDIST_WG_DNS_IP=10.133.0.1
 DNSDIST_WG_NETWORK=10.133.0.0/24

@@ -21,9 +21,10 @@ DEFAULT_PROXY_URLS = (
     "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/tld-not-cn.txt",
 )
 DEFAULT_AD_URL = "https://adguardteam.github.io/HostlistsRegistry/assets/filter_29.txt"
-DEFAULT_TARGET = Path("/etc/dnsdist/generated/domain-rules.lua")
-DEFAULT_MAIN_CONFIG = Path("/etc/dnsdist/dnsdist.conf")
-DEFAULT_LOCK = Path("/run/lock/dnsdist-domain-update.lock")
+DEFAULT_INSTALL_DIR = Path(os.getenv("DNSDIST_INSTALL_DIR", "/opt/mydnsdist"))
+DEFAULT_TARGET = DEFAULT_INSTALL_DIR / "generated/domain-rules.lua"
+DEFAULT_MAIN_CONFIG = DEFAULT_INSTALL_DIR / "config/dnsdist.conf"
+DEFAULT_LOCK = DEFAULT_INSTALL_DIR / "generated/.domain-update.lock"
 USER_AGENT = "dnsdist-rule-updater/2.0"
 
 LABEL_RE = re.compile(r"^[a-z0-9_-]{1,63}$", re.IGNORECASE)
@@ -835,7 +836,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path(os.getenv("DNSDIST_MAIN_CONFIG", str(DEFAULT_MAIN_CONFIG))),
     )
-    parser.add_argument("--lock-file", type=Path, default=DEFAULT_LOCK)
+    parser.add_argument(
+        "--lock-file",
+        type=Path,
+        default=Path(os.getenv("DNSDIST_DOMAIN_LOCK", str(DEFAULT_LOCK))),
+    )
     parser.add_argument("--no-check", action="store_true")
     parser.add_argument("--no-reload", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
