@@ -43,6 +43,17 @@ class InstallScriptTest(unittest.TestCase):
         self.assertIn("curl", content)
         self.assertNotIn("git clone", content)
 
+    def test_installer_only_suggests_manual_dependency_installation(self) -> None:
+        content = "\n".join(
+            (
+                INSTALLER.read_text(encoding="utf-8"),
+                COMMON.read_text(encoding="utf-8"),
+            )
+        )
+        self.assertIn("请手动执行 apt-get update", content)
+        self.assertNotIn("DEBIAN_FRONTEND=noninteractive", content)
+        self.assertNotRegex(content, r"(?m)^\s*apt-get (?:update|install)\b")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,7 +8,7 @@ usage() {
   printf '%s\n' \
     '用法：sudo ./install.sh [选项]' \
     '' \
-    '仅下载本文件即可完成依赖安装、完整代码下载、参数配置和服务启动。' \
+    '仅下载本文件即可完成依赖检查、完整代码下载、参数配置和服务启动。' \
     '' \
     '选项：' \
     '  --install-dir PATH   安装目录，默认 /opt/mydnsdist' \
@@ -77,20 +77,30 @@ if [[ ! -f ${common_file} ]]; then
     printf '%s\n' '错误：安装目录不能包含 . 或 .. 路径段' >&2
     exit 1
   }
+  bootstrap_commands=()
   bootstrap_packages=()
   if ! command -v wget >/dev/null 2>&1 && ! command -v curl >/dev/null 2>&1; then
+    bootstrap_commands+=('wget 或 curl')
     bootstrap_packages+=(wget ca-certificates)
   fi
-  command -v tar >/dev/null 2>&1 || bootstrap_packages+=(tar)
-  command -v sha256sum >/dev/null 2>&1 || bootstrap_packages+=(coreutils)
+  if ! command -v tar >/dev/null 2>&1; then
+    bootstrap_commands+=(tar)
+    bootstrap_packages+=(tar)
+  fi
+  if ! command -v sha256sum >/dev/null 2>&1; then
+    bootstrap_commands+=(sha256sum)
+    bootstrap_packages+=(coreutils)
+  fi
   if [[ ${#bootstrap_packages[@]} -gt 0 ]]; then
-    command -v apt-get >/dev/null 2>&1 || {
-      printf '错误：缺少引导安装依赖，且当前系统不支持 apt：%s\n' \
+    printf '错误：缺少引导安装依赖：%s\n' "${bootstrap_commands[*]}" >&2
+    if command -v apt-get >/dev/null 2>&1; then
+      printf '提示：请手动执行 apt-get update && apt-get install -y %s，然后重新运行本脚本。\n' \
         "${bootstrap_packages[*]}" >&2
-      exit 1
-    }
-    apt-get update
-    DEBIAN_FRONTEND=noninteractive apt-get install -y "${bootstrap_packages[@]}"
+    else
+      printf '提示：请使用当前系统的软件包管理器安装：%s，然后重新运行本脚本。\n' \
+        "${bootstrap_packages[*]}" >&2
+    fi
+    exit 1
   fi
   temporary_dir=$(mktemp -d)
   trap 'rm -rf -- "${temporary_dir}"' EXIT

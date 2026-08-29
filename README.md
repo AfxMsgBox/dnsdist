@@ -97,12 +97,12 @@ sudo bash install.sh
 sudo bash install.sh --non-interactive
 ```
 
-安装脚本会优先使用 `wget` 下载 GitHub `main` 分支压缩包，没有 `wget` 时回退到 `curl`；两者都没有时自动安装 `wget`。在 Debian/Ubuntu 上，缺少 dnsdist、WireGuard 工具、Python 3 或其他基础依赖时会通过 `apt` 自动安装。
+安装脚本会优先使用 `wget` 下载 GitHub `main` 分支压缩包，没有 `wget` 时回退到 `curl`。脚本不会自动安装任何软件；缺少 dnsdist、WireGuard 工具、Python 3、下载工具或其他基础依赖时，会列出缺失命令和建议的手动安装命令，然后退出。
 
 安装过程会：
 
 1. 提示并建立集中安装目录。
-2. 自动补齐缺少的软件包。
+2. 检查必要软件；缺少时仅给出手动安装提示并退出。
 3. 下载并检查完整源码压缩包。
 4. 提示全部运行参数并验证地址、网络、端口和阈值。
 5. 自动识别 dnsdist 服务运行组并设置权限。

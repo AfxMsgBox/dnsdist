@@ -41,19 +41,11 @@ download_file() {
   fi
 }
 
-ensure_downloader() {
-  if command -v wget >/dev/null 2>&1 || command -v curl >/dev/null 2>&1; then
-    return
-  fi
-  command -v apt-get >/dev/null 2>&1 || \
-    die '缺少 wget/curl，且当前系统不支持 apt 自动安装'
-  apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y wget ca-certificates
-}
-
 ensure_dependencies() {
+  local -a missing_commands=()
   local -a packages=()
   local command_name package_name requirement
+  local -A package_seen=()
   local -a requirements=(
     'dnsdist:dnsdist'
     'ip:iproute2'
@@ -65,21 +57,35 @@ ensure_dependencies() {
     'tar:tar'
   )
 
-  ensure_downloader
+  if ! command -v wget >/dev/null 2>&1 && ! command -v curl >/dev/null 2>&1; then
+    missing_commands+=('wget 或 curl')
+    packages+=(wget ca-certificates)
+    package_seen[wget]=1
+    package_seen[ca-certificates]=1
+  fi
   for requirement in "${requirements[@]}"; do
     command_name=${requirement%%:*}
     package_name=${requirement#*:}
     if ! command -v "${command_name}" >/dev/null 2>&1; then
-      packages+=("${package_name}")
+      missing_commands+=("${command_name}")
+      if [[ ! -v package_seen["${package_name}"] ]]; then
+        packages+=("${package_name}")
+        package_seen["${package_name}"]=1
+      fi
     fi
   done
-  if [[ ${#packages[@]} -eq 0 ]]; then
+  if [[ ${#missing_commands[@]} -eq 0 ]]; then
     return
   fi
-  command -v apt-get >/dev/null 2>&1 || \
-    die "缺少必要命令，且当前系统不支持 apt 自动安装：${packages[*]}"
-  apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
+  printf '错误：缺少必要命令：%s\n' "${missing_commands[*]}" >&2
+  if command -v apt-get >/dev/null 2>&1; then
+    printf '提示：请手动执行 apt-get update && apt-get install -y %s，然后重新运行本脚本。\n' \
+      "${packages[*]}" >&2
+  else
+    printf '提示：请使用当前系统的软件包管理器安装：%s，然后重新运行本脚本。\n' \
+      "${packages[*]}" >&2
+  fi
+  return 1
 }
 
 required_source_paths() {
