@@ -12,8 +12,8 @@ usage() {
     '' \
     '选项：' \
     '  --install-dir PATH   安装目录，默认 /opt/mydnsdist' \
-    '  --dns-port PORT      dnsdist 监听端口，默认 53' \
-    '  --non-interactive    不询问参数，使用现有值或仓库默认值' \
+    '  --dns-port PORT      dnsdist 监听端口，未指定时默认 53' \
+    '  --non-interactive    不询问参数，使用已有值、系统检测值或仓库默认值' \
     '  --archive-url URL    覆盖 GitHub 源码压缩包地址' \
     '  -h, --help           显示帮助'
 }
@@ -238,7 +238,10 @@ source_root=${install_dir}
 validate_source "${source_root}"
 
 config_file=${source_root}/config/dnsdist-automation
-config_current=${config_file}
+config_current=''
+if [[ ${existing_installation} -eq 1 ]]; then
+  config_current=${config_file}
+fi
 if [[ ${existing_installation} -eq 0 && \
       -f /etc/default/dnsdist-automation && \
       ! -L /etc/default/dnsdist-automation ]]; then
@@ -247,10 +250,11 @@ if [[ ${existing_installation} -eq 0 && \
 fi
 config_arguments=(
   --template "${config_file}"
-  --current "${config_current}"
   --output "${config_file}"
   --install-dir "${source_root}"
+  --detect-system
 )
+[[ -n ${config_current} ]] && config_arguments+=(--current "${config_current}")
 [[ -n ${dns_port} ]] && config_arguments+=(--dns-port "${dns_port}")
 if [[ ${non_interactive} -eq 0 && -t 0 ]]; then
   printf '%s\n' '请确认 dnsdist 运行参数；直接回车使用方括号中的默认值。'

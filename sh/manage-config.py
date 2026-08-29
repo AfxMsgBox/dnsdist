@@ -6,6 +6,7 @@ import ipaddress
 import os
 import re
 import shlex
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Callable, Sequence
@@ -155,6 +156,199 @@ VALIDATORS: dict[str, Callable[[str], None]] = {
 }
 
 
+def parse_wireguard_ipv4(text: str) -> tuple[str, str] | None:
+    for candidate in re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}/\d{1,2}\b", text):
+        try:
+            interface = ipaddress.ip_interface(candidate)
+        except ValueError:
+            continue
+        if interface.version == 4:
+            return str(interface.ip), str(interface.network)
+    return None
+
+
+def _run_command(arguments: Sequence[str]) -> str:
+    try:
+        result = subprocess.run(
+            arguments,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except OSError:
+        return ""
+    return result.stdout if result.returncode == 0 else ""
+
+
+def detect_wireguard_values(
+    preferred_interface: str | None = None,
+    *,
+    config_dir: Path = Path("/etc/wireguard"),
+) -> dict[str, str]:
+    running = _run_command(("wg", "show", "interfaces")).split()
+    config_names = (
+        sorted(path.stem for path in config_dir.glob("*.conf"))
+        if config_dir.is_dir()
+        else []
+    )
+    candidates = list(dict.fromkeys((*running, *config_names)))
+    if not candidates:
+        return {}
+    if preferred_interface in candidates:
+        interface = preferred_interface
+    elif len(running) == 1:
+        interface = running[0]
+    elif "wg-pub" in candidates:
+        interface = "wg-pub"
+    else:
+        interface = candidates[0]
+
+    address = parse_wireguard_ipv4(
+        _run_command(("ip", "-o", "-4", "address", "show", "dev", interface))
+    )
+    config_path = config_dir / f"{interface}.conf"
+    if address is None and config_path.is_file():
+        try:
+            address = parse_wireguard_ipv4(config_path.read_text(encoding="utf-8"))
+        except OSError:
+            pass
+    if address is None:
+        return {"DNSDIST_WG_INTERFACE": interface}
+    ip, network = address
+    return {
+        "DNSDIST_WG_INTERFACE": interface,
+        "DNSDIST_WG_DNS_IP": ip,
+        "DNSDIST_WG_NETWORK": network,
+    }
+
+
+def mihomo_config_candidates(
+    arguments: Sequence[str], *, cwd: Path = Path("/")
+) -> list[Path]:
+    config: str | None = None
+    directory: str | None = None
+    index = 1
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument in {"-f", "--config"} and index + 1 < len(arguments):
+            config = arguments[index + 1]
+            index += 2
+            continue
+        if argument.startswith("--config="):
+            config = argument.split("=", 1)[1]
+        elif argument in {"-d", "--dir"} and index + 1 < len(arguments):
+            directory = arguments[index + 1]
+            index += 2
+            continue
+        elif argument.startswith("--dir="):
+            directory = argument.split("=", 1)[1]
+        index += 1
+
+    def resolve(value: str) -> Path:
+        path = Path(value)
+        return path if path.is_absolute() else cwd / path
+
+    if config:
+        return [resolve(config)]
+    root = resolve(directory) if directory else cwd
+    return [root / "config.yaml", root / "config.yml"]
+
+
+def normalize_mihomo_listen(value: str) -> str | None:
+    listen = value.strip().strip("'\"")
+    if listen.startswith(":"):
+        listen = f"127.0.0.1{listen}"
+    elif listen.startswith("*:"):
+        listen = f"127.0.0.1:{listen.split(':', 1)[1]}"
+    elif listen.startswith("0.0.0.0:") or listen.startswith("[::]:"):
+        listen = f"127.0.0.1:{listen.rsplit(':', 1)[1]}"
+    try:
+        validate_endpoint(listen)
+    except ValueError:
+        return None
+    return listen
+
+
+def parse_mihomo_dns(text: str) -> str | None:
+    dns_indent: int | None = None
+    enabled = True
+    listen: str | None = None
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(raw_line) - len(raw_line.lstrip())
+        if dns_indent is None:
+            if re.fullmatch(r"dns\s*:\s*(?:#.*)?", stripped):
+                dns_indent = indent
+            continue
+        if indent <= dns_indent:
+            break
+        match = re.match(r"(enable|listen)\s*:\s*(.*?)\s*(?:#.*)?$", stripped)
+        if not match:
+            continue
+        name, raw_value = match.groups()
+        value = raw_value.strip().strip("'\"")
+        if name == "enable":
+            enabled = value.lower() in {"true", "yes", "on", "1"}
+        elif name == "listen":
+            listen = value
+    return normalize_mihomo_listen(listen) if enabled and listen else None
+
+
+def detect_mihomo_values(*, proc_root: Path = Path("/proc")) -> dict[str, str]:
+    try:
+        processes = sorted(
+            (path for path in proc_root.iterdir() if path.name.isdigit()),
+            key=lambda path: int(path.name),
+        )
+    except OSError:
+        return {}
+    for process in processes:
+        try:
+            arguments = [
+                item.decode(errors="replace")
+                for item in (process / "cmdline").read_bytes().split(b"\0")
+                if item
+            ]
+        except OSError:
+            continue
+        if not arguments or "mihomo" not in Path(arguments[0]).name.lower():
+            continue
+        try:
+            cwd = (process / "cwd").resolve()
+        except OSError:
+            cwd = Path("/")
+        for config in mihomo_config_candidates(arguments, cwd=cwd):
+            try:
+                address = parse_mihomo_dns(config.read_text(encoding="utf-8"))
+            except OSError:
+                continue
+            if address:
+                return {"DNSDIST_MIHOMO_ADDRESS": address}
+    return {}
+
+
+def detect_system_values(
+    preferred_interface: str | None = None,
+) -> dict[str, str]:
+    values = detect_wireguard_values(preferred_interface)
+    values.update(detect_mihomo_values())
+    return values
+
+
+def print_detected_values(values: dict[str, str]) -> None:
+    interface = values.get("DNSDIST_WG_INTERFACE")
+    address = values.get("DNSDIST_WG_DNS_IP")
+    network = values.get("DNSDIST_WG_NETWORK")
+    if interface:
+        detail = f"，地址 {address}，网络 {network}" if address and network else ""
+        print(f"检测到 WireGuard：{interface}{detail}")
+    if "DNSDIST_MIHOMO_ADDRESS" in values:
+        print(f"检测到 Mihomo DNS：{values['DNSDIST_MIHOMO_ADDRESS']}")
+
+
 def prompt_value(name: str, default: str) -> str:
     description = PROMPTS.get(name, name)
     while True:
@@ -242,6 +436,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--install-dir", type=Path, required=True)
     parser.add_argument("--interactive", action="store_true")
     parser.add_argument("--dns-port")
+    parser.add_argument("--detect-system", action="store_true")
     return parser
 
 
@@ -249,12 +444,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     template = args.template.read_text(encoding="utf-8")
     current = read_values(args.current) if args.current else {}
+    values: dict[str, str] = {}
+    if args.detect_system:
+        detected = detect_system_values(current.get("DNSDIST_WG_INTERFACE"))
+        print_detected_values(detected)
+        values.update(detected)
+    values.update(current)
     fixed_values = {}
     if args.dns_port is not None:
         fixed_values["DNSDIST_WG_DNS_PORT"] = args.dns_port
     content = render_config(
         template,
-        current,
+        values,
         install_dir=args.install_dir,
         interactive=args.interactive,
         fixed_values=fixed_values,

@@ -14,6 +14,7 @@ from dnsdist_automation.domains import (  # noqa: E402
     _validate_drift,
     adblock_pattern_to_regex,
     build_rules,
+    format_report,
     lower_safe_regex,
     minimize_suffixes,
     normalize_domain,
@@ -135,6 +136,11 @@ class DomainRulesTest(unittest.TestCase):
         self.assertEqual(result.report["ad_source"], "ad-source")
         self.assertFalse(result.report["limits"]["enforced"])
         self.assertGreater(result.report["proxy_output"]["suffix"], 0)
+        report = format_report(result.report, "仅统计，未写入规则")
+        self.assertIn("域名规则统计", report)
+        self.assertIn("优化后最终代理匹配规则", report)
+        self.assertIn("结果：仅统计，未写入规则", report)
+        self.assertNotIn('{"', report)
 
 
 if __name__ == "__main__":

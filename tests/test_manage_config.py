@@ -77,6 +77,44 @@ class ManageConfigTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             manage_config.validate_integer("65536", 1, 65535)
 
+    def test_parse_wireguard_runtime_address(self) -> None:
+        self.assertEqual(
+            manage_config.parse_wireguard_ipv4(
+                "7: wg-pub    inet 10.133.0.1/24 scope global wg-pub"
+            ),
+            ("10.133.0.1", "10.133.0.0/24"),
+        )
+
+    def test_mihomo_runtime_arguments_and_dns_config(self) -> None:
+        self.assertEqual(
+            manage_config.mihomo_config_candidates(
+                ("/etc/proxy/core/mihomo", "-d", "/etc/proxy/core")
+            ),
+            [
+                Path("/etc/proxy/core/config.yaml"),
+                Path("/etc/proxy/core/config.yml"),
+            ],
+        )
+        self.assertEqual(
+            manage_config.parse_mihomo_dns(
+                "dns:\n  enable: true\n  listen: :253\nproxies: []\n"
+            ),
+            "127.0.0.1:253",
+        )
+        self.assertIsNone(
+            manage_config.parse_mihomo_dns(
+                "dns:\n  enable: false\n  listen: 0.0.0.0:253\n"
+            )
+        )
+
+    def test_explicit_mihomo_config_argument_takes_priority(self) -> None:
+        self.assertEqual(
+            manage_config.mihomo_config_candidates(
+                ("mihomo", "-d", "/etc/mihomo", "--config=/run/mihomo.yaml")
+            ),
+            [Path("/run/mihomo.yaml")],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

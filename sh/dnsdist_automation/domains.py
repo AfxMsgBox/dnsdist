@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import ipaddress
-import json
 import os
 import re
 import sys
@@ -739,8 +738,8 @@ def _ad_output_counts(rules: AdRules) -> dict[str, object]:
     }
 
 
-def _validate_drift(rules: AdRules, *, max_regex: int, max_unsupported_ratio: float) -> None:
-    regex_count = sum(
+def _ad_regex_count(rules: AdRules) -> int:
+    return sum(
         len(bucket.regexes)
         for bucket in (
             rules.block,
@@ -751,6 +750,10 @@ def _validate_drift(rules: AdRules, *, max_regex: int, max_unsupported_ratio: fl
             *rules.typed_allow.values(),
         )
     )
+
+
+def _validate_drift(rules: AdRules, *, max_regex: int, max_unsupported_ratio: float) -> None:
+    regex_count = _ad_regex_count(rules)
     if regex_count > max_regex:
         raise RuntimeError(f"advertisement regex count {regex_count} exceeds {max_regex}")
     denominator = max(rules.stats.candidate_rules, 1)
@@ -816,10 +819,83 @@ def build_rules(
         "limits": {
             "max_ad_regex_rules": max_regex,
             "max_unsupported_ad_ratio": max_unsupported_ratio,
+            "ad_regex_rules": _ad_regex_count(ad_rules),
+            "unsupported_ad_ratio": (
+                ad_rules.stats.unsupported / max(ad_rules.stats.candidate_rules, 1)
+            ),
             "enforced": enforce_limits,
         },
     }
     return BuildResult(render_domain_rules(ad_rules, proxy_rules), report)
+
+
+def _count_text(counts: dict[str, object]) -> str:
+    return (
+        f"精确 {counts['exact']}，后缀 {counts['suffix']}，"
+        f"正则 {counts['regex']}"
+    )
+
+
+def format_report(report: dict[str, object], result_text: str) -> str:
+    ad_parse = report["ad_parse"]
+    ad_output = report["ad_output"]
+    proxy_input = report["proxy_input"]
+    proxy_output = report["proxy_output"]
+    proxy_sources = report["proxy_sources"]
+    limits = report["limits"]
+    assert isinstance(ad_parse, dict)
+    assert isinstance(ad_output, dict)
+    assert isinstance(proxy_input, dict)
+    assert isinstance(proxy_output, dict)
+    assert isinstance(proxy_sources, dict)
+    assert isinstance(limits, dict)
+
+    lines = [
+        "域名规则统计",
+        "",
+        "广告规则：",
+        f"  来源：{report['ad_source']}",
+        (
+            f"  解析：总行数 {ad_parse['total_lines']}，候选规则 "
+            f"{ad_parse['candidate_rules']}，忽略 {ad_parse['ignored']}，"
+            f"无效 {ad_parse['invalid']}，不支持 {ad_parse['unsupported']}"
+        ),
+        f"  最终阻断：{_count_text(ad_output['block'])}",
+        f"  最终放行：{_count_text(ad_output['allow'])}",
+        f"  最终高优先级阻断：{_count_text(ad_output['important'])}",
+        (
+            "  查询类型规则组：阻断 "
+            f"{ad_output['typed_groups']['block']}，放行 "
+            f"{ad_output['typed_groups']['allow']}，高优先级 "
+            f"{ad_output['typed_groups']['important']}"
+        ),
+        "",
+        "代理规则：",
+        f"  各来源合并后：{_count_text(proxy_input)}",
+        f"  优化后最终代理匹配规则：{_count_text(proxy_output)}",
+        "  各来源：",
+    ]
+    for url, source in proxy_sources.items():
+        assert isinstance(source, dict)
+        lines.append(f"    {url}：{_count_text(source['output'])}")
+
+    enforced = bool(limits["enforced"])
+    status = "已启用" if enforced else "仅统计，未强制"
+    lines.extend(
+        [
+            "",
+            "安全检查：",
+            (
+                f"  广告正则 {limits['ad_regex_rules']} / "
+                f"{limits['max_ad_regex_rules']}；不支持规则占比 "
+                f"{limits['unsupported_ad_ratio']:.2%} / "
+                f"{limits['max_unsupported_ad_ratio']:.2%}（{status}）"
+            ),
+            "",
+            f"结果：{result_text}",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -876,7 +952,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             sys.stdout.write(result.content)
             return 0
         if args.stats_only:
-            print(json.dumps(result.report, ensure_ascii=False, indent=2, sort_keys=True))
+            print(format_report(result.report, "仅统计，未写入规则"))
             return 0
         with exclusive_lock(args.lock_file):
             changed = activate_generated_file(
@@ -890,8 +966,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"update-dnsdist-domains: {exc}", file=sys.stderr)
         return 1
 
-    print(json.dumps(result.report, ensure_ascii=False, sort_keys=True))
-    print("domain rules updated" if changed else "domain rules unchanged")
+    result_text = "域名规则已更新" if changed else "域名规则无变化"
+    print(format_report(result.report, result_text))
     return 0
 
 

@@ -12,7 +12,7 @@ WireGuard 客户端 -> dnsdist :53（端口可配置）
 
 规则优先级固定为：**广告规则 > 代理规则 > AliDNS**。配置未启用 dnsdist packet cache，以避免不同 Peer 的 ECS 响应互相污染。
 
-## 默认参数
+## 默认参数与系统检测
 
 | 参数 | 默认值 |
 | --- | --- |
@@ -26,7 +26,9 @@ WireGuard 客户端 -> dnsdist :53（端口可配置）
 | 域名更新时间 | 每 6 小时 |
 | Endpoint 检查间隔 | 60 秒 |
 
-安装时会逐项提示全部参数，直接回车即可使用默认值。安装后的本机参数位于 `/opt/mydnsdist/config/dnsdist-automation`；dnsdist 和两个更新服务共用该文件。
+全新安装时，安装器会先读取系统状态：WireGuard 优先读取正在运行的接口及其 IPv4 地址，必要时回退到 `/etc/wireguard/*.conf`；Mihomo 会从运行进程的 `-d` / `--dir` 或 `-f` / `--config` 参数定位配置文件，再读取 `dns.enable` 和 `dns.listen`。例如运行参数为 `mihomo -d /etc/proxy/core` 且配置中为 `listen: :253` 时，会使用 `127.0.0.1:253`。
+
+参数优先级为：命令行参数 > 已有项目或旧版配置 > 系统检测值 > 表中默认值。安装时会逐项提示全部参数，直接回车即可使用当前显示值。安装后的本机参数位于 `/opt/mydnsdist/config/dnsdist-automation`；dnsdist 和两个更新服务共用该文件。
 
 ## 文件布局
 
@@ -92,13 +94,13 @@ wget -O install.sh https://raw.githubusercontent.com/AfxMsgBox/dnsdist/main/sh/i
 sudo bash install.sh
 ```
 
-安装脚本默认建议使用 `/opt/mydnsdist`，并依次提示本机参数。直接回车使用默认值，也可以输入其他不含空白字符的绝对安装路径。非交互安装使用：
+安装脚本默认建议使用 `/opt/mydnsdist`，自动显示检测到的 WireGuard 和 Mihomo DNS 参数，再依次提示本机参数。直接回车使用当前值，也可以输入其他不含空白字符的绝对安装路径。非交互安装使用：
 
 ```bash
 sudo bash install.sh --non-interactive
 ```
 
-监听端口默认为 `53`。可在交互提示中输入其他端口，也可直接通过命令行指定：
+dnsdist 监听端口不会从 WireGuard 或 Mihomo 配置推断，未指定且没有已有项目配置时默认为 `53`。可在交互提示中输入其他端口，也可直接通过命令行指定：
 
 ```bash
 sudo bash install.sh --dns-port 5353
@@ -197,7 +199,9 @@ example.com
 
 所有集合都会去重；后缀树会删除已被父级覆盖的子域名，精确集合会删除已被同组后缀覆盖的条目。生成文件只返回局部规则表，主配置注册规则后主动回收构建期间的临时 Lua 对象。
 
-每次更新会向标准输出写一行 JSON 统计。若保留的广告正则超过 `DNSDIST_MAX_AD_REGEX_RULES`，或不支持规则占比超过 `DNSDIST_MAX_UNSUPPORTED_AD_RATIO`，更新会失败并保留上一版规则。默认值分别为 `2048` 和 `0.05`。
+每次更新会向标准输出写入中文摘要，包括各来源解析结果、广告规则分类、代理规则优化前后数量及安全阈值。“优化后最终代理匹配规则”是所有代理来源合并、跨来源去重，并删除已被父级后缀覆盖的子域名后，真正写入 dnsdist 的匹配规则数量；它不是查询次数，也不是源文件行数。
+
+若保留的广告正则超过 `DNSDIST_MAX_AD_REGEX_RULES`，或不支持规则占比超过 `DNSDIST_MAX_UNSUPPORTED_AD_RATIO`，更新会失败并保留上一版规则。默认值分别为 `2048` 和 `0.05`。
 
 ## ECS 生成逻辑
 
@@ -226,7 +230,7 @@ systemctl status dnsdist
 systemctl list-timers 'dnsdist-*'
 ```
 
-`--stats-only` 只下载、解析并输出 JSON 报告，不写文件或重载服务。正常更新器先原子写入新文件，再验证完整主配置；验证或服务重载失败时会恢复旧文件。内容没有变化时不会重载 dnsdist。
+`--stats-only` 只下载、解析并输出中文统计摘要，不写文件或重载服务。正常更新器先原子写入新文件，再验证完整主配置；验证或服务重载失败时会恢复旧文件。内容没有变化时不会重载 dnsdist。
 
 测试请求：
 
