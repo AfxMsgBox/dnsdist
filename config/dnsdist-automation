@@ -3,6 +3,7 @@ DNSDIST_INSTALL_DIR=/opt/mydnsdist
 
 # dnsdist listener and trusted WireGuard network
 DNSDIST_WG_DNS_IP=10.133.0.1
+DNSDIST_WG_DNS_PORT=53
 DNSDIST_WG_NETWORK=10.133.0.0/24
 DNSDIST_WG_INTERFACE=wg-pub
 

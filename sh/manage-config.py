@@ -17,6 +17,7 @@ INTERFACE_RE = re.compile(r"^[A-Za-z0-9_=+.-]{1,15}$")
 
 PROMPTS = {
     "DNSDIST_WG_DNS_IP": "dnsdist 监听的 WireGuard IPv4 地址",
+    "DNSDIST_WG_DNS_PORT": "dnsdist 监听端口",
     "DNSDIST_WG_NETWORK": "允许查询的 WireGuard 网络",
     "DNSDIST_WG_INTERFACE": "WireGuard 接口名称",
     "DNSDIST_MIHOMO_ADDRESS": "Mihomo DNS 地址（主机:端口）",
@@ -132,6 +133,7 @@ def validate_urls(value: str) -> None:
 
 VALIDATORS: dict[str, Callable[[str], None]] = {
     "DNSDIST_WG_DNS_IP": validate_ip,
+    "DNSDIST_WG_DNS_PORT": lambda value: validate_integer(value, 1, 65535),
     "DNSDIST_WG_NETWORK": validate_network,
     "DNSDIST_WG_INTERFACE": validate_interface,
     "DNSDIST_MIHOMO_ADDRESS": validate_endpoint,
@@ -174,7 +176,10 @@ def render_config(
     *,
     install_dir: Path,
     interactive: bool,
+    fixed_values: dict[str, str] | None = None,
 ) -> str:
+    fixed_values = fixed_values or {}
+    values.update(fixed_values)
     output: list[str] = []
     template_names: set[str] = set()
     for line in template_text.splitlines():
@@ -188,7 +193,7 @@ def render_config(
         value = values.get(name, template_default)
         if name == "DNSDIST_INSTALL_DIR":
             value = str(install_dir)
-        elif interactive:
+        elif interactive and name not in fixed_values:
             value = prompt_value(name, value)
         else:
             validator = VALIDATORS.get(name)
@@ -236,6 +241,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--install-dir", type=Path, required=True)
     parser.add_argument("--interactive", action="store_true")
+    parser.add_argument("--dns-port")
     return parser
 
 
@@ -243,11 +249,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     template = args.template.read_text(encoding="utf-8")
     current = read_values(args.current) if args.current else {}
+    fixed_values = {}
+    if args.dns_port is not None:
+        fixed_values["DNSDIST_WG_DNS_PORT"] = args.dns_port
     content = render_config(
         template,
         current,
         install_dir=args.install_dir,
         interactive=args.interactive,
+        fixed_values=fixed_values,
     )
     atomic_write(args.output, content)
     return 0

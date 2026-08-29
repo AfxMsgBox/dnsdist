@@ -12,12 +12,14 @@ usage() {
     '' \
     '选项：' \
     '  --install-dir PATH   安装目录，默认 /opt/mydnsdist' \
+    '  --dns-port PORT      dnsdist 监听端口，默认 53' \
     '  --non-interactive    不询问参数，使用现有值或仓库默认值' \
     '  --archive-url URL    覆盖 GitHub 源码压缩包地址' \
     '  -h, --help           显示帮助'
 }
 
 install_dir=''
+dns_port=''
 archive_url=${DNSDIST_ARCHIVE_URL:-${DEFAULT_ARCHIVE_URL}}
 non_interactive=0
 deploy_only=0
@@ -26,6 +28,11 @@ while [[ $# -gt 0 ]]; do
     --install-dir)
       [[ $# -ge 2 ]] || { usage >&2; exit 2; }
       install_dir=$2
+      shift 2
+      ;;
+    --dns-port)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      dns_port=$2
       shift 2
       ;;
     --non-interactive) non_interactive=1; shift ;;
@@ -39,6 +46,18 @@ while [[ $# -gt 0 ]]; do
     *) usage >&2; exit 2 ;;
   esac
 done
+
+if [[ -n ${dns_port} ]]; then
+  if [[ ! ${dns_port} =~ ^[0-9]+$ || ${#dns_port} -gt 5 ]]; then
+    printf '%s\n' '错误：dnsdist 监听端口必须是 1 到 65535 的整数' >&2
+    exit 2
+  fi
+  dns_port=$((10#${dns_port}))
+  if (( dns_port < 1 || dns_port > 65535 )); then
+    printf '%s\n' '错误：dnsdist 监听端口必须是 1 到 65535 的整数' >&2
+    exit 2
+  fi
+fi
 
 if [[ ${EUID} -ne 0 ]]; then
   printf '%s\n' '错误：必须使用 root 权限运行安装脚本' >&2
@@ -120,6 +139,7 @@ if [[ ! -f ${common_file} ]]; then
   }
   sha256sum "${archive}" | awk '{print $1}' > "${extracted}/.source-sha256"
   arguments=(--install-dir "${install_dir}" --archive-url "${archive_url}")
+  [[ -n ${dns_port} ]] && arguments+=(--dns-port "${dns_port}")
   [[ ${non_interactive} -eq 1 ]] && arguments+=(--non-interactive)
   "${extracted}/sh/install.sh" "${arguments[@]}"
   exit
@@ -231,6 +251,7 @@ config_arguments=(
   --output "${config_file}"
   --install-dir "${source_root}"
 )
+[[ -n ${dns_port} ]] && config_arguments+=(--dns-port "${dns_port}")
 if [[ ${non_interactive} -eq 0 && -t 0 ]]; then
   printf '%s\n' '请确认 dnsdist 运行参数；直接回车使用方括号中的默认值。'
   config_arguments+=(--interactive)
@@ -245,7 +266,7 @@ if ! ip -o address show | awk '{print $4}' | cut -d/ -f1 | \
   grep -Fqx -- "${DNSDIST_WG_DNS_IP}"; then
   die "dnsdist 监听地址尚未分配到本机：${DNSDIST_WG_DNS_IP}"
 fi
-check_dns_listener_available "${DNSDIST_WG_DNS_IP}"
+check_dns_listener_available "${DNSDIST_WG_DNS_IP}" "${DNSDIST_WG_DNS_PORT}"
 
 dnsdist_user=$(systemctl show dnsdist.service --property=User --value 2>/dev/null || true)
 dnsdist_group=$(systemctl show dnsdist.service --property=Group --value 2>/dev/null || true)

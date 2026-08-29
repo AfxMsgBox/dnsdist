@@ -21,6 +21,19 @@ class InstallScriptTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("/opt/mydnsdist", result.stdout)
+        self.assertIn("--dns-port", result.stdout)
+
+    def test_invalid_dns_port_is_rejected_before_installation(self) -> None:
+        for value in ("0", "65536", "not-a-port"):
+            with self.subTest(value=value):
+                result = subprocess.run(
+                    ["bash", str(INSTALLER), "--dns-port", value],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("1 到 65535", result.stderr)
 
     def test_repository_layout_is_installation_layout(self) -> None:
         result = subprocess.run(
@@ -121,10 +134,11 @@ class InstallScriptTest(unittest.TestCase):
                 [
                     "bash",
                     "-c",
-                    'source "$1"; dns_listener_conflicts "$2" "$3" "$4"',
+                    'source "$1"; dns_listener_conflicts "$2" "$3" "$4" "$5"',
                     "test",
                     str(COMMON),
                     "10.133.0.1",
+                    "5353",
                     local_address,
                     process_info,
                 ],
@@ -134,11 +148,12 @@ class InstallScriptTest(unittest.TestCase):
             )
             return result.returncode == 0
 
-        self.assertTrue(conflicts("*:53", 'users:(("AdGuardHome",pid=1,fd=2))'))
-        self.assertTrue(conflicts("10.133.0.1:53", ""))
-        self.assertFalse(conflicts("10.133.0.2:53", ""))
+        self.assertTrue(conflicts("*:5353", 'users:(("AdGuardHome",pid=1,fd=2))'))
+        self.assertTrue(conflicts("10.133.0.1:5353", ""))
+        self.assertFalse(conflicts("*:53", 'users:(("AdGuardHome",pid=1,fd=2))'))
+        self.assertFalse(conflicts("10.133.0.2:5353", ""))
         self.assertFalse(
-            conflicts("10.133.0.1:53", 'users:(("dnsdist",pid=1,fd=2))')
+            conflicts("10.133.0.1:5353", 'users:(("dnsdist",pid=1,fd=2))')
         )
 
 

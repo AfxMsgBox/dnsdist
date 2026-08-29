@@ -3,7 +3,7 @@
 这套配置把 dnsdist 用作中央 DNS 策略路由器：
 
 ```text
-WireGuard 客户端 -> dnsdist :53
+WireGuard 客户端 -> dnsdist :53（端口可配置）
                        |
                        +-- 广告域名 -> NXDOMAIN
                        +-- 代理域名 -> Mihomo 127.0.0.1:253
@@ -17,7 +17,8 @@ WireGuard 客户端 -> dnsdist :53
 | 参数 | 默认值 |
 | --- | --- |
 | WireGuard 接口 | `wg-pub` |
-| dnsdist 监听地址 | `10.133.0.1:53` |
+| dnsdist 监听 IP | `10.133.0.1` |
+| dnsdist 监听端口 | `53` |
 | WireGuard 网络 | `10.133.0.0/24` |
 | Mihomo DNS | `127.0.0.1:253` |
 | AliDNS | `223.5.5.5:53`、`223.6.6.6:53` |
@@ -78,7 +79,7 @@ tests/
 还需要确认：
 
 - Mihomo 已监听 `127.0.0.1:253`。
-- `10.133.0.1:53` 未被 AdGuard Home 或其他 DNS 服务占用。
+- 默认监听的 `10.133.0.1:53` 未被 AdGuard Home 或其他 DNS 服务占用，或者安装时指定其他空闲端口。
 - `/etc/dnsdist/dnsdist.yml` 不存在；dnsdist 2.1+ 可能优先加载它。
 - 目标系统使用 systemd，且已安装 Python 3、dnsdist、WireGuard 工具。
 
@@ -97,6 +98,15 @@ sudo bash install.sh
 sudo bash install.sh --non-interactive
 ```
 
+监听端口默认为 `53`。可在交互提示中输入其他端口，也可直接通过命令行指定：
+
+```bash
+sudo bash install.sh --dns-port 5353
+sudo bash install.sh --non-interactive --dns-port 5353
+```
+
+端口必须位于 `1–65535`。命令行参数优先于已有配置；更新和重装会保留当前端口，除非再次传入 `--dns-port` 覆盖。
+
 安装脚本会优先使用 `wget` 下载 GitHub `main` 分支压缩包，没有 `wget` 时回退到 `curl`。脚本不会自动安装任何软件；缺少 dnsdist、WireGuard 工具、Python 3、下载工具或其他基础依赖时，会列出缺失命令和建议的手动安装命令，然后退出。
 
 如果安装目录中已有可识别的完整项目结构，单文件安装器会保留本机参数、当前生成规则和供应商配置备份，原子刷新程序文件后继续安装。因此前一次安装在系统集成或服务启动阶段失败时，可以直接重新运行刚下载的 `install.sh`。非空目录不符合项目结构时仍会拒绝覆盖。
@@ -109,13 +119,13 @@ sudo bash install.sh --non-interactive
 2. 检查必要软件；缺少时仅给出手动安装提示并退出。
 3. 下载并检查完整源码压缩包。
 4. 提示全部运行参数并验证地址、网络、端口和阈值。
-5. 检查 `DNSDIST_WG_DNS_IP:53` 是否被其他程序占用；冲突时显示占用信息并退出。
+5. 检查配置的 `DNSDIST_WG_DNS_IP:DNSDIST_WG_DNS_PORT` 是否被其他程序占用；冲突时显示占用信息并退出。
 6. 自动识别 dnsdist 服务运行组并设置权限。
 7. 迁移可确认归属的旧版单元，只在系统目录建立必要软链接。
 8. 下载域名列表并读取 `wg show wg-pub dump`。
 9. 检查完整 dnsdist 配置，启动 dnsdist 和两个 timer。
 
-脚本不会自动停用 AdGuard Home，也不会修改 WireGuard 或防火墙配置。如果 AdGuard Home 等程序监听通配地址的 53 端口，必须先调整其监听地址或停止该服务。
+脚本不会自动停用 AdGuard Home，也不会修改 WireGuard 或防火墙配置。如果 AdGuard Home 等程序监听通配地址的 53 端口，可以调整其监听地址、停止该服务，或者让 dnsdist 使用其他端口。使用非 53 端口时，客户端或站点转发器也必须查询该端口。
 
 ## 更新
 
@@ -224,6 +234,12 @@ systemctl list-timers 'dnsdist-*'
 dig @10.133.0.1 00px.net
 dig @10.133.0.1 google.com
 dig @10.133.0.1 qq.com
+```
+
+如果监听端口改为 `5353`：
+
+```bash
+dig -p 5353 @10.133.0.1 qq.com
 ```
 
 查看实际 ECS 映射：

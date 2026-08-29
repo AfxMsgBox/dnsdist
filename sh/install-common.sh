@@ -216,30 +216,35 @@ legacy_systemd_file_is_managed() {
 
 dns_listener_conflicts() {
   local listen_ip=$1
-  local local_address=$2
-  local process_info=${3:-}
+  local listen_port=$2
+  local local_address=$3
+  local process_info=${4:-}
   [[ ${process_info} == *'("dnsdist",'* ]] && return 1
   case "${local_address}" in
-    '*:53'|'0.0.0.0:53'|'[::]:53'|"${listen_ip}:53"|"[${listen_ip}]:53") return 0 ;;
+    "*:${listen_port}"|"0.0.0.0:${listen_port}"|"[::]:${listen_port}"|\
+      "${listen_ip}:${listen_port}"|"[${listen_ip}]:${listen_port}") return 0 ;;
     *) return 1 ;;
   esac
 }
 
 check_dns_listener_available() {
   local listen_ip=$1
+  local listen_port=$2
   local protocol state recv_q send_q local_address peer_address process_info
   local -a conflicts=()
   while read -r \
     protocol state recv_q send_q local_address peer_address process_info; do
     [[ -n ${local_address:-} ]] || continue
-    if dns_listener_conflicts "${listen_ip}" "${local_address}" "${process_info:-}"; then
+    if dns_listener_conflicts \
+      "${listen_ip}" "${listen_port}" "${local_address}" "${process_info:-}"; then
       conflicts+=("${protocol} ${local_address} ${process_info:-未知进程}")
     fi
-  done < <(ss -H -lntup 'sport = :53' 2>/dev/null || true)
+  done < <(ss -H -lntup "sport = :${listen_port}" 2>/dev/null || true)
   if [[ ${#conflicts[@]} -eq 0 ]]; then
     return
   fi
-  printf '错误：dnsdist 监听地址 %s:53 已被其他进程占用：\n' "${listen_ip}" >&2
+  printf '错误：dnsdist 监听地址 %s:%s 已被其他进程占用：\n' \
+    "${listen_ip}" "${listen_port}" >&2
   printf '  %s\n' "${conflicts[@]}" >&2
   printf '%s\n' '提示：请先调整或停止占用程序；安装器不会自动停止其他服务。' >&2
   return 1

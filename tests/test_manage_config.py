@@ -26,6 +26,7 @@ class ManageConfigTest(unittest.TestCase):
             "# values\n"
             "DNSDIST_INSTALL_DIR=/opt/mydnsdist\n"
             "DNSDIST_WG_DNS_IP=10.0.0.1\n"
+            "DNSDIST_WG_DNS_PORT=53\n"
             "DNSDIST_WG_NETWORK=10.0.0.0/24\n"
             "A=one\nB=two\n"
         )
@@ -36,6 +37,7 @@ class ManageConfigTest(unittest.TestCase):
             interactive=False,
         )
         self.assertIn("DNSDIST_INSTALL_DIR=/srv/dnsdist", rendered)
+        self.assertIn("DNSDIST_WG_DNS_PORT=53", rendered)
         self.assertIn("A='local value'", rendered)
         self.assertIn("B=two", rendered)
         self.assertIn("OLD=kept", rendered)
@@ -54,6 +56,26 @@ class ManageConfigTest(unittest.TestCase):
             manage_config.validate_endpoint("127.0.0.1")
         with self.assertRaises(ValueError):
             manage_config.validate_ratio("1.1")
+
+    def test_dns_port_override_and_validation(self) -> None:
+        template = (
+            "DNSDIST_INSTALL_DIR=/opt/mydnsdist\n"
+            "DNSDIST_WG_DNS_IP=10.0.0.1\n"
+            "DNSDIST_WG_DNS_PORT=53\n"
+            "DNSDIST_WG_NETWORK=10.0.0.0/24\n"
+        )
+        rendered = manage_config.render_config(
+            template,
+            {},
+            install_dir=Path("/opt/mydnsdist"),
+            interactive=False,
+            fixed_values={"DNSDIST_WG_DNS_PORT": "5353"},
+        )
+        self.assertIn("DNSDIST_WG_DNS_PORT=5353", rendered)
+        with self.assertRaises(ValueError):
+            manage_config.validate_integer("0", 1, 65535)
+        with self.assertRaises(ValueError):
+            manage_config.validate_integer("65536", 1, 65535)
 
 
 if __name__ == "__main__":
