@@ -174,8 +174,75 @@ safe_managed_link() {
       die "拒绝覆盖其他软链接：${target} -> ${current}"
     return
   fi
-  [[ ! -e ${target} ]] || die "拒绝覆盖已有文件：${target}"
+  if [[ -e ${target} ]]; then
+    if legacy_systemd_file_is_managed "${target}"; then
+      printf '迁移旧版项目文件：%s\n' "${target}"
+      rm -f -- "${target}"
+    else
+      die "拒绝覆盖已有文件：${target}"
+    fi
+  fi
   ln -s "${source}" "${target}"
+}
+
+legacy_systemd_file_is_managed() {
+  local path=$1
+  local content
+  [[ -f ${path} && ! -L ${path} ]] || return 1
+  content=$(<"${path}")
+  case "$(basename -- "${path}")" in
+    10-dnsdist-automation.conf)
+      [[ ${content} == *'EnvironmentFile=-/etc/default/dnsdist-automation'* ]]
+      ;;
+    dnsdist-domain-update.service)
+      [[ ${content} == *'ExecStart=/usr/local/sbin/update-dnsdist-domains.py'* && \
+         ${content} == *'EnvironmentFile=-/etc/default/dnsdist-automation'* ]]
+      ;;
+    dnsdist-ecs-update.service)
+      [[ ${content} == *'ExecStart=/usr/local/sbin/update-dnsdist-ecs.py'* && \
+         ${content} == *'EnvironmentFile=-/etc/default/dnsdist-automation'* ]]
+      ;;
+    dnsdist-domain-update.timer)
+      [[ ${content} == *'Description=Update dnsdist domain rules every six hours'* && \
+         ${content} == *'Unit=dnsdist-domain-update.service'* ]]
+      ;;
+    dnsdist-ecs-update.timer)
+      [[ ${content} == *'Description=Check WireGuard endpoint changes every minute'* && \
+         ${content} == *'Unit=dnsdist-ecs-update.service'* ]]
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+dns_listener_conflicts() {
+  local listen_ip=$1
+  local local_address=$2
+  local process_info=${3:-}
+  [[ ${process_info} == *'("dnsdist",'* ]] && return 1
+  case "${local_address}" in
+    '*:53'|'0.0.0.0:53'|'[::]:53'|"${listen_ip}:53"|"[${listen_ip}]:53") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+check_dns_listener_available() {
+  local listen_ip=$1
+  local protocol state recv_q send_q local_address peer_address process_info
+  local -a conflicts=()
+  while read -r \
+    protocol state recv_q send_q local_address peer_address process_info; do
+    [[ -n ${local_address:-} ]] || continue
+    if dns_listener_conflicts "${listen_ip}" "${local_address}" "${process_info:-}"; then
+      conflicts+=("${protocol} ${local_address} ${process_info:-未知进程}")
+    fi
+  done < <(ss -H -lntup 'sport = :53' 2>/dev/null || true)
+  if [[ ${#conflicts[@]} -eq 0 ]]; then
+    return
+  fi
+  printf '错误：dnsdist 监听地址 %s:53 已被其他进程占用：\n' "${listen_ip}" >&2
+  printf '  %s\n' "${conflicts[@]}" >&2
+  printf '%s\n' '提示：请先调整或停止占用程序；安装器不会自动停止其他服务。' >&2
+  return 1
 }
 
 load_local_config() {

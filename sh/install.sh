@@ -118,18 +118,11 @@ if [[ ! -f ${common_file} ]]; then
     printf '%s\n' '错误：下载的软件包结构不完整' >&2
     exit 1
   }
-  if [[ -e ${install_dir} ]] && \
-    [[ -n $(find "${install_dir}" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null) ]]; then
-    printf '错误：安装目录不是空目录：%s\n' "${install_dir}" >&2
-    exit 1
-  fi
-  mkdir -p "$(dirname -- "${install_dir}")"
-  rmdir "${install_dir}" 2>/dev/null || true
-  mv "${extracted}" "${install_dir}"
-  sha256sum "${archive}" | awk '{print $1}' > "${install_dir}/.source-sha256"
-  arguments=(--deploy-only --install-dir "${install_dir}" --archive-url "${archive_url}")
+  sha256sum "${archive}" | awk '{print $1}' > "${extracted}/.source-sha256"
+  arguments=(--install-dir "${install_dir}" --archive-url "${archive_url}")
   [[ ${non_interactive} -eq 1 ]] && arguments+=(--non-interactive)
-  exec "${install_dir}/sh/install.sh" "${arguments[@]}"
+  "${extracted}/sh/install.sh" "${arguments[@]}"
+  exit
 fi
 
 # shellcheck disable=SC1090
@@ -138,27 +131,103 @@ require_root
 validate_install_dir "${install_dir}"
 ensure_dependencies
 
-if [[ ${deploy_only} -eq 0 && ${source_root} != "${install_dir}" ]]; then
-  if [[ -e ${install_dir} ]] && \
-    [[ -n $(find "${install_dir}" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null) ]]; then
-    die "安装目录不是空目录：${install_dir}"
+deployment_work_dir=''
+deployment_previous_root=''
+deployment_swapped=0
+existing_installation=0
+
+cleanup_deployment() {
+  local status=$?
+  trap - EXIT
+  if [[ ${status} -ne 0 && ${deployment_swapped} -eq 1 ]]; then
+    printf '%s\n' '安装失败，正在恢复原安装目录……' >&2
+    if [[ -e ${install_dir} ]]; then
+      mv "${install_dir}" "${deployment_work_dir}/failed"
+    fi
+    mv "${deployment_previous_root}" "${install_dir}"
+    systemctl daemon-reload >/dev/null 2>&1 || true
   fi
-  mkdir -p "${install_dir}"
+  if [[ -n ${deployment_work_dir} && -d ${deployment_work_dir} ]]; then
+    rm -rf -- "${deployment_work_dir}"
+  fi
+  exit "${status}"
+}
+trap cleanup_deployment EXIT
+
+deploy_source_tree() {
+  local source=$1
+  local destination=$2
+  local parent_dir base_name next_root item generated_file
+  parent_dir=$(dirname -- "${destination}")
+  base_name=$(basename -- "${destination}")
+  mkdir -p "${parent_dir}"
+  deployment_work_dir=$(mktemp -d "${parent_dir}/.${base_name}.install.XXXXXX")
+  next_root=${deployment_work_dir}/next
+  mkdir -p "${next_root}"
   for item in ARCH.md README.md TODO.md config generated sh systemd tests; do
-    cp -a "${source_root}/${item}" "${install_dir}/"
+    cp -a "${source}/${item}" "${next_root}/"
   done
-  arguments=(--deploy-only --install-dir "${install_dir}" --archive-url "${archive_url}")
-  [[ ${non_interactive} -eq 1 ]] && arguments+=(--non-interactive)
-  exec "${install_dir}/sh/install.sh" "${arguments[@]}"
+  if [[ -f ${source}/.source-sha256 ]]; then
+    cp -p "${source}/.source-sha256" "${next_root}/.source-sha256"
+  fi
+  validate_source "${next_root}"
+
+  if [[ -e ${destination} && ! -d ${destination} ]]; then
+    die "安装路径已存在且不是目录：${destination}"
+  fi
+  if [[ -d ${destination} ]] && \
+    [[ -n $(find "${destination}" -mindepth 1 -maxdepth 1 -print -quit) ]]; then
+    source_is_complete "${destination}" || \
+      die "安装目录非空且不是可识别的完整安装：${destination}"
+    existing_installation=1
+    printf '检测到已有安装，保留本机配置并刷新程序文件：%s\n' "${destination}"
+    python3 "${next_root}/sh/manage-config.py" \
+      --template "${next_root}/config/dnsdist-automation" \
+      --current "${destination}/config/dnsdist-automation" \
+      --output "${next_root}/config/dnsdist-automation" \
+      --install-dir "${destination}"
+    for generated_file in domain-rules.lua ecs-rules.lua; do
+      if [[ -f ${destination}/generated/${generated_file} ]]; then
+        cp -p \
+          "${destination}/generated/${generated_file}" \
+          "${next_root}/generated/${generated_file}"
+      fi
+    done
+    if [[ -f ${destination}/config/vendor-dnsdist.conf.backup ]]; then
+      cp -p \
+        "${destination}/config/vendor-dnsdist.conf.backup" \
+        "${next_root}/config/vendor-dnsdist.conf.backup"
+    fi
+    deployment_previous_root=${deployment_work_dir}/previous
+    mv "${destination}" "${deployment_previous_root}"
+    mv "${next_root}" "${destination}"
+    deployment_swapped=1
+  else
+    rmdir "${destination}" 2>/dev/null || true
+    mv "${next_root}" "${destination}"
+  fi
+}
+
+if [[ ${deploy_only} -eq 0 && ${source_root} != "${install_dir}" ]]; then
+  deploy_source_tree "${source_root}" "${install_dir}"
+elif [[ ${source_root} == "${install_dir}" ]]; then
+  existing_installation=1
 fi
 
 source_root=${install_dir}
 validate_source "${source_root}"
 
 config_file=${source_root}/config/dnsdist-automation
+config_current=${config_file}
+if [[ ${existing_installation} -eq 0 && \
+      -f /etc/default/dnsdist-automation && \
+      ! -L /etc/default/dnsdist-automation ]]; then
+  printf '%s\n' '检测到旧版本机参数，将迁移到集中安装目录。'
+  config_current=/etc/default/dnsdist-automation
+fi
 config_arguments=(
   --template "${config_file}"
-  --current "${config_file}"
+  --current "${config_current}"
   --output "${config_file}"
   --install-dir "${source_root}"
 )
@@ -176,6 +245,7 @@ if ! ip -o address show | awk '{print $4}' | cut -d/ -f1 | \
   grep -Fqx -- "${DNSDIST_WG_DNS_IP}"; then
   die "dnsdist 监听地址尚未分配到本机：${DNSDIST_WG_DNS_IP}"
 fi
+check_dns_listener_available "${DNSDIST_WG_DNS_IP}"
 
 dnsdist_user=$(systemctl show dnsdist.service --property=User --value 2>/dev/null || true)
 dnsdist_group=$(systemctl show dnsdist.service --property=Group --value 2>/dev/null || true)
