@@ -142,28 +142,92 @@ sudo /opt/mydnsdist/sh/update.sh
 sudo /opt/mydnsdist/sh/update.sh --configure
 ```
 
-## 卸载
+## 系统修改与卸载
 
-默认卸载会停止并禁用 dnsdist 及本项目的更新定时器，移除系统软链接，但保留集中安装目录：
+默认安装会修改以下位置：
+
+| 修改位置 | 内容 | 卸载处理 |
+| --- | --- | --- |
+| `/opt/mydnsdist` | 配置、脚本、systemd 单元和生成规则 | `--purge` 或手工删除 |
+| `/etc/dnsdist/dnsdist.conf` | 指向项目配置的软链接 | 删除链接并恢复原配置备份 |
+| `/etc/systemd/system/dnsdist.service.d/10-dnsdist-automation.conf` | dnsdist 环境变量 drop-in 软链接 | 删除 |
+| `/etc/systemd/system/dnsdist-domain-update.{service,timer}` | 域名更新服务和定时器软链接 | 禁用后删除 |
+| `/etc/systemd/system/dnsdist-ecs-update.{service,timer}` | ECS 更新服务和定时器软链接 | 禁用后删除 |
+| systemd 启用状态 | 启用 dnsdist 和两个更新定时器 | 停止并禁用 |
+
+如果安装前存在普通文件 `/etc/dnsdist/dnsdist.conf`，安装器会将它移动到 `/opt/mydnsdist/config/vendor-dnsdist.conf.backup`，卸载时可以恢复。
+
+默认卸载会停止并禁用 dnsdist 及更新定时器，移除系统软链接，但保留安装目录：
 
 ```bash
-sudo ./sh/uninstall.sh
+sudo /opt/mydnsdist/sh/uninstall.sh
 ```
 
 如需同时删除完整集中安装目录：
 
 ```bash
-sudo ./sh/uninstall.sh --purge
+sudo /opt/mydnsdist/sh/uninstall.sh --purge
 ```
 
 执行前可预览全部操作；预览模式不要求 root 权限：
 
 ```bash
-./sh/uninstall.sh --dry-run
-./sh/uninstall.sh --purge --dry-run
+/opt/mydnsdist/sh/uninstall.sh --dry-run
+/opt/mydnsdist/sh/uninstall.sh --purge --dry-run
 ```
 
 卸载脚本不会卸载 dnsdist、WireGuard、Python 或 Mihomo 软件包，也不会修改 WireGuard 和防火墙。`--purge` 会删除运行该脚本所在的完整安装目录，因此不要在安装目录中存放无关文件。
+
+### 手工卸载
+
+以下命令适用于默认安装目录；使用了 `--install-dir` 时，需要替换所有 `/opt/mydnsdist`。
+
+先停止并禁用服务：
+
+```bash
+sudo systemctl disable --now dnsdist-domain-update.timer dnsdist-ecs-update.timer
+sudo systemctl stop dnsdist-domain-update.service dnsdist-ecs-update.service
+sudo systemctl disable --now dnsdist.service
+```
+
+删除本项目的 systemd 软链接：
+
+```bash
+sudo rm -f -- /etc/systemd/system/dnsdist-domain-update.service
+sudo rm -f -- /etc/systemd/system/dnsdist-domain-update.timer
+sudo rm -f -- /etc/systemd/system/dnsdist-ecs-update.service
+sudo rm -f -- /etc/systemd/system/dnsdist-ecs-update.timer
+sudo rm -f -- /etc/systemd/system/dnsdist.service.d/10-dnsdist-automation.conf
+sudo rmdir /etc/systemd/system/dnsdist.service.d 2>/dev/null || true
+```
+
+仅在 dnsdist 主配置确实指向本项目时删除它：
+
+```bash
+if [ "$(readlink /etc/dnsdist/dnsdist.conf 2>/dev/null)" = "/opt/mydnsdist/config/dnsdist.conf" ]; then
+  sudo rm -f -- /etc/dnsdist/dnsdist.conf
+fi
+```
+
+恢复安装前的 dnsdist 配置，然后删除安装目录：
+
+```bash
+if ! sudo test -e /etc/dnsdist/dnsdist.conf && \
+   ! sudo test -L /etc/dnsdist/dnsdist.conf && \
+   sudo test -f /opt/mydnsdist/config/vendor-dnsdist.conf.backup; then
+  sudo mv /opt/mydnsdist/config/vendor-dnsdist.conf.backup /etc/dnsdist/dnsdist.conf
+fi
+
+sudo rm -rf -- /opt/mydnsdist
+sudo systemctl daemon-reload
+sudo systemctl reset-failed
+```
+
+如果恢复了原配置并希望继续使用软件包自带的 dnsdist，可重新启动：
+
+```bash
+sudo systemctl enable --now dnsdist.service
+```
 
 ## 规则来源
 
