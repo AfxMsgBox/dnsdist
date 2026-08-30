@@ -25,9 +25,10 @@ class UpdateScriptTest(unittest.TestCase):
         self.assertIn(".source-sha256", content)
         self.assertIn("manage-config.py", content)
         self.assertIn("previous_root", content)
+        self.assertIn('remove_development_files "${next_root}"', content)
+        self.assertNotIn("unittest discover", content)
         self.assertNotIn("git pull", content)
 
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -13,8 +13,8 @@ DNSDIST_ALIDNS_1=223.5.5.5:53
 DNSDIST_ALIDNS_2=223.6.6.6:53
 
 # ECS prefixes derived from the current WireGuard peer endpoint
-DNSDIST_ECS_PREFIX_V4=24
-DNSDIST_ECS_PREFIX_V6=56
+DNSDIST_ECS_PREFIX_V4=32
+DNSDIST_ECS_PREFIX_V6=128
 # Set to 1 only when private/documentation endpoint addresses are intentional.
 DNSDIST_ECS_ALLOW_NON_GLOBAL=0
 

@@ -35,6 +35,21 @@ PROMPTS = {
     "DNSDIST_MAX_UNSUPPORTED_AD_RATIO": "不支持广告规则占比上限",
 }
 
+INTERACTIVE_NAMES = {
+    "DNSDIST_WG_DNS_IP",
+    "DNSDIST_WG_DNS_PORT",
+    "DNSDIST_WG_NETWORK",
+    "DNSDIST_WG_INTERFACE",
+    "DNSDIST_MIHOMO_ADDRESS",
+    "DNSDIST_ALIDNS_1",
+    "DNSDIST_ALIDNS_2",
+}
+
+MIGRATED_DEFAULTS = {
+    "DNSDIST_ECS_PREFIX_V4": ("24", "32"),
+    "DNSDIST_ECS_PREFIX_V6": ("56", "128"),
+}
+
 
 def parse_value(raw: str) -> str:
     if not raw:
@@ -349,6 +364,13 @@ def print_detected_values(values: dict[str, str]) -> None:
         print(f"检测到 Mihomo DNS：{values['DNSDIST_MIHOMO_ADDRESS']}")
 
 
+def migrate_old_defaults(values: dict[str, str]) -> None:
+    for name, (old, new) in MIGRATED_DEFAULTS.items():
+        if values.get(name) == old:
+            values[name] = new
+            print(f"更新默认参数：{name}={old} → {new}")
+
+
 def prompt_value(name: str, default: str) -> str:
     description = PROMPTS.get(name, name)
     while True:
@@ -387,7 +409,7 @@ def render_config(
         value = values.get(name, template_default)
         if name == "DNSDIST_INSTALL_DIR":
             value = str(install_dir)
-        elif interactive and name not in fixed_values:
+        elif interactive and name in INTERACTIVE_NAMES and name not in fixed_values:
             value = prompt_value(name, value)
         else:
             validator = VALIDATORS.get(name)
@@ -444,6 +466,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     template = args.template.read_text(encoding="utf-8")
     current = read_values(args.current) if args.current else {}
+    migrate_old_defaults(current)
     values: dict[str, str] = {}
     if args.detect_system:
         detected = detect_system_values(current.get("DNSDIST_WG_INTERFACE"))

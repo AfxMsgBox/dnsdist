@@ -1,0 +1,22 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run offline tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Check Python syntax
+        run: python3 -m compileall -q sh tests
+      - name: Check shell syntax
+        run: bash -n sh/install.sh sh/install-common.sh sh/update.sh sh/uninstall.sh
+      - name: Check whitespace
+        run: git diff --check

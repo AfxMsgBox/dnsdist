@@ -4,6 +4,32 @@ set -euo pipefail
 DEFAULT_INSTALL_DIR=/opt/mydnsdist
 DEFAULT_ARCHIVE_URL=https://github.com/AfxMsgBox/dnsdist/archive/refs/heads/main.tar.gz
 
+if [[ -t 1 && ${TERM:-dumb} != dumb && -z ${NO_COLOR:-} ]]; then
+  BOOT_RED=$'\033[31m'
+  BOOT_YELLOW=$'\033[33m'
+  BOOT_CYAN=$'\033[36m'
+  BOOT_BOLD=$'\033[1m'
+  BOOT_RESET=$'\033[0m'
+else
+  BOOT_RED=''
+  BOOT_YELLOW=''
+  BOOT_CYAN=''
+  BOOT_BOLD=''
+  BOOT_RESET=''
+fi
+
+bootstrap_step() {
+  printf '%s%s==>%s %s\n' "${BOOT_BOLD}" "${BOOT_CYAN}" "${BOOT_RESET}" "$*"
+}
+
+bootstrap_error() {
+  printf '%s✗ 错误：%s%s\n' "${BOOT_RED}" "$*" "${BOOT_RESET}" >&2
+}
+
+bootstrap_warning() {
+  printf '%s!%s %s\n' "${BOOT_YELLOW}" "${BOOT_RESET}" "$*" >&2
+}
+
 usage() {
   printf '%s\n' \
     '用法：sudo ./install.sh [选项]' \
@@ -49,18 +75,18 @@ done
 
 if [[ -n ${dns_port} ]]; then
   if [[ ! ${dns_port} =~ ^[0-9]+$ || ${#dns_port} -gt 5 ]]; then
-    printf '%s\n' '错误：dnsdist 监听端口必须是 1 到 65535 的整数' >&2
+    bootstrap_error 'dnsdist 监听端口必须是 1 到 65535 的整数'
     exit 2
   fi
   dns_port=$((10#${dns_port}))
   if (( dns_port < 1 || dns_port > 65535 )); then
-    printf '%s\n' '错误：dnsdist 监听端口必须是 1 到 65535 的整数' >&2
+    bootstrap_error 'dnsdist 监听端口必须是 1 到 65535 的整数'
     exit 2
   fi
 fi
 
 if [[ ${EUID} -ne 0 ]]; then
-  printf '%s\n' '错误：必须使用 root 权限运行安装脚本' >&2
+  bootstrap_error '必须使用 root 权限运行安装脚本'
   exit 1
 fi
 
@@ -83,17 +109,17 @@ done
 # unpack the repository snapshot, then execute the complete installer.
 if [[ ! -f ${common_file} ]]; then
   [[ ${install_dir} =~ ^/[A-Za-z0-9._/-]+$ && ${install_dir} != / && ${install_dir} != *//* ]] || {
-    printf '%s\n' '错误：安装目录必须是仅包含安全字符的绝对路径' >&2
+    bootstrap_error '安装目录必须是仅包含安全字符的绝对路径'
     exit 1
   }
   case "${install_dir}" in
     /|/bin|/boot|/dev|/etc|/home|/lib|/lib64|/opt|/proc|/root|/run|/sbin|/srv|/sys|/tmp|/usr|/var)
-      printf '错误：安装目录范围过大：%s\n' "${install_dir}" >&2
+      bootstrap_error "安装目录范围过大：${install_dir}"
       exit 1
       ;;
   esac
   [[ ${install_dir} != *'/../'* && ${install_dir} != */.. && ${install_dir} != *'/./'* ]] || {
-    printf '%s\n' '错误：安装目录不能包含 . 或 .. 路径段' >&2
+    bootstrap_error '安装目录不能包含 . 或 .. 路径段'
     exit 1
   }
   bootstrap_commands=()
@@ -111,13 +137,13 @@ if [[ ! -f ${common_file} ]]; then
     bootstrap_packages+=(coreutils)
   fi
   if [[ ${#bootstrap_packages[@]} -gt 0 ]]; then
-    printf '错误：缺少引导安装依赖：%s\n' "${bootstrap_commands[*]}" >&2
+    bootstrap_error "缺少引导安装依赖：${bootstrap_commands[*]}"
     if command -v apt-get >/dev/null 2>&1; then
-      printf '提示：请手动执行 apt-get update && apt-get install -y %s，然后重新运行本脚本。\n' \
-        "${bootstrap_packages[*]}" >&2
+      bootstrap_warning \
+        "请手动执行 apt-get update && apt-get install -y ${bootstrap_packages[*]}，然后重新运行本脚本。"
     else
-      printf '提示：请使用当前系统的软件包管理器安装：%s，然后重新运行本脚本。\n' \
-        "${bootstrap_packages[*]}" >&2
+      bootstrap_warning \
+        "请使用当前系统的软件包管理器安装：${bootstrap_packages[*]}，然后重新运行本脚本。"
     fi
     exit 1
   fi
@@ -125,6 +151,7 @@ if [[ ! -f ${common_file} ]]; then
   trap 'rm -rf -- "${temporary_dir}"' EXIT
   archive=${temporary_dir}/dnsdist.tar.gz
   extracted=${temporary_dir}/source
+  bootstrap_step '下载 dnsdist 策略网关程序包'
   if command -v wget >/dev/null 2>&1; then
     wget --quiet --timeout=30 --tries=3 --output-document="${archive}" "${archive_url}"
   else
@@ -134,7 +161,7 @@ if [[ ! -f ${common_file} ]]; then
   mkdir -p "${extracted}"
   tar -xzf "${archive}" --strip-components=1 -C "${extracted}"
   [[ -f ${extracted}/sh/install-common.sh ]] || {
-    printf '%s\n' '错误：下载的软件包结构不完整' >&2
+    bootstrap_error '下载的软件包结构不完整'
     exit 1
   }
   sha256sum "${archive}" | awk '{print $1}' > "${extracted}/.source-sha256"
@@ -147,9 +174,12 @@ fi
 
 # shellcheck disable=SC1090
 source "${common_file}"
+log_step '检查运行环境'
 require_root
 validate_install_dir "${install_dir}"
 ensure_dependencies
+check_base_environment
+log_success '运行环境检查通过'
 
 deployment_work_dir=''
 deployment_previous_root=''
@@ -160,7 +190,7 @@ cleanup_deployment() {
   local status=$?
   trap - EXIT
   if [[ ${status} -ne 0 && ${deployment_swapped} -eq 1 ]]; then
-    printf '%s\n' '安装失败，正在恢复原安装目录……' >&2
+    log_warning '安装失败，正在恢复原安装目录……'
     if [[ -e ${install_dir} ]]; then
       mv "${install_dir}" "${deployment_work_dir}/failed"
     fi
@@ -184,7 +214,7 @@ deploy_source_tree() {
   deployment_work_dir=$(mktemp -d "${parent_dir}/.${base_name}.install.XXXXXX")
   next_root=${deployment_work_dir}/next
   mkdir -p "${next_root}"
-  for item in ARCH.md README.md TODO.md config generated sh systemd tests; do
+  for item in ARCH.md README.md TODO.md config generated sh systemd; do
     cp -a "${source}/${item}" "${next_root}/"
   done
   if [[ -f ${source}/.source-sha256 ]]; then
@@ -200,7 +230,7 @@ deploy_source_tree() {
     source_is_complete "${destination}" || \
       die "安装目录非空且不是可识别的完整安装：${destination}"
     existing_installation=1
-    printf '检测到已有安装，保留本机配置并刷新程序文件：%s\n' "${destination}"
+    log_info "检测到已有安装，保留本机配置并刷新程序文件：${destination}"
     python3 "${next_root}/sh/manage-config.py" \
       --template "${next_root}/config/dnsdist-automation" \
       --current "${destination}/config/dnsdist-automation" \
@@ -229,7 +259,9 @@ deploy_source_tree() {
 }
 
 if [[ ${deploy_only} -eq 0 && ${source_root} != "${install_dir}" ]]; then
+  log_step '部署程序文件'
   deploy_source_tree "${source_root}" "${install_dir}"
+  log_success "程序文件已部署到 ${install_dir}"
 elif [[ ${source_root} == "${install_dir}" ]]; then
   existing_installation=1
 fi
@@ -245,7 +277,7 @@ fi
 if [[ ${existing_installation} -eq 0 && \
       -f /etc/default/dnsdist-automation && \
       ! -L /etc/default/dnsdist-automation ]]; then
-  printf '%s\n' '检测到旧版本机参数，将迁移到集中安装目录。'
+  log_info '检测到旧版本机参数，将迁移到集中安装目录。'
   config_current=/etc/default/dnsdist-automation
 fi
 config_arguments=(
@@ -257,12 +289,13 @@ config_arguments=(
 [[ -n ${config_current} ]] && config_arguments+=(--current "${config_current}")
 [[ -n ${dns_port} ]] && config_arguments+=(--dns-port "${dns_port}")
 if [[ ${non_interactive} -eq 0 && -t 0 ]]; then
-  printf '%s\n' '请确认 dnsdist 运行参数；直接回车使用方括号中的默认值。'
+  log_step '确认 dnsdist 运行参数；直接回车使用方括号中的默认值'
   config_arguments+=(--interactive)
 fi
 python3 "${source_root}/sh/manage-config.py" "${config_arguments[@]}"
 load_local_config "${source_root}"
 
+log_step '检查 WireGuard、Mihomo 与监听端口'
 if ! wg show "${DNSDIST_WG_INTERFACE}" >/dev/null 2>&1; then
   die "WireGuard 接口不可用：${DNSDIST_WG_INTERFACE}"
 fi
@@ -271,6 +304,8 @@ if ! ip -o address show | awk '{print $4}' | cut -d/ -f1 | \
   die "dnsdist 监听地址尚未分配到本机：${DNSDIST_WG_DNS_IP}"
 fi
 check_dns_listener_available "${DNSDIST_WG_DNS_IP}" "${DNSDIST_WG_DNS_PORT}"
+check_mihomo_listener "${DNSDIST_MIHOMO_ADDRESS}"
+log_success '网络运行环境检查通过'
 
 dnsdist_user=$(systemctl show dnsdist.service --property=User --value 2>/dev/null || true)
 dnsdist_group=$(systemctl show dnsdist.service --property=Group --value 2>/dev/null || true)
@@ -335,6 +370,7 @@ for unit in \
 done
 
 systemctl daemon-reload
+log_step '生成规则并验证 dnsdist 配置'
 "${source_root}/sh/update-dnsdist-domains.py" --no-check --no-reload
 "${source_root}/sh/update-dnsdist-ecs.py" --no-check --no-reload
 dnsdist --check-config -C "${source_root}/config/dnsdist.conf"
@@ -344,4 +380,4 @@ systemctl enable --now \
   dnsdist-domain-update.timer \
   dnsdist-ecs-update.timer
 
-printf 'dnsdist 策略网关安装成功：%s\n' "${source_root}"
+log_success "dnsdist 策略网关安装成功：${source_root}"

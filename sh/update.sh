@@ -33,10 +33,13 @@ install_dir=$(cd -- "${script_dir}/.." && pwd)
 
 # shellcheck disable=SC1091
 source "${script_dir}/install-common.sh"
+log_step '检查更新环境'
 require_root
 validate_install_dir "${install_dir}"
 ensure_dependencies
+check_base_environment
 source_is_complete "${install_dir}" || die '当前安装目录结构不完整'
+log_success '更新环境检查通过'
 
 if [[ ${configure} -eq 1 && ! -t 0 ]]; then
   die '--configure 需要交互式终端'
@@ -58,7 +61,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-printf '%s\n' '正在下载最新程序包……'
+log_step '下载最新程序包'
 download_file "${archive_url}" "${archive}"
 new_checksum=$(sha256sum "${archive}" | awk '{print $1}')
 old_checksum=''
@@ -66,12 +69,13 @@ if [[ -f ${install_dir}/.source-sha256 ]]; then
   old_checksum=$(<"${install_dir}/.source-sha256")
 fi
 if [[ ${new_checksum} == "${old_checksum}" && ${configure} -eq 0 ]]; then
-  printf '%s\n' '当前已经是最新版本'
+  log_success '当前已经是最新版本'
   exit 0
 fi
 
 extract_archive "${archive}" "${next_root}"
 validate_source "${next_root}"
+remove_development_files "${next_root}"
 
 config_arguments=(
   --template "${next_root}/config/dnsdist-automation"
@@ -80,7 +84,7 @@ config_arguments=(
   --install-dir "${install_dir}"
 )
 if [[ ${configure} -eq 1 ]]; then
-  printf '%s\n' '请确认 dnsdist 运行参数；直接回车保留当前值。'
+  log_step '确认 dnsdist 运行参数；直接回车保留当前值'
   config_arguments+=(--interactive)
 fi
 python3 "${next_root}/sh/manage-config.py" "${config_arguments[@]}"
@@ -123,11 +127,12 @@ set -a
 # shellcheck disable=SC1090
 source "${next_root}/config/dnsdist-automation"
 set +a
+check_mihomo_listener "${DNSDIST_MIHOMO_ADDRESS}"
 DNSDIST_INSTALL_DIR=${next_root} \
   dnsdist --check-config -C "${next_root}/config/dnsdist.conf"
 
 rollback() {
-  printf '%s\n' '新版本启动失败，正在恢复上一版本……' >&2
+  log_warning '新版本启动失败，正在恢复上一版本……'
   systemctl stop dnsdist-domain-update.timer dnsdist-ecs-update.timer dnsdist.service \
     >/dev/null 2>&1 || true
   if [[ -d ${install_dir} ]]; then
@@ -175,4 +180,4 @@ fi
 rm -rf -- "${previous_root}" "${work_dir}"
 swapped=0
 trap - EXIT
-printf 'dnsdist 策略网关更新成功：%s\n' "${install_dir}"
+log_success "dnsdist 策略网关更新成功：${install_dir}"

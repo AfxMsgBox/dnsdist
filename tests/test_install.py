@@ -51,6 +51,34 @@ class InstallScriptTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_installer_does_not_run_or_deploy_development_tests(self) -> None:
+        installer = INSTALLER.read_text(encoding="utf-8")
+        common = COMMON.read_text(encoding="utf-8")
+        self.assertNotIn("python3 -m unittest", installer + common)
+        self.assertNotIn("python3 -m compileall", installer + common)
+        self.assertNotIn("config generated sh systemd tests", installer)
+        self.assertNotIn("tests/test_common.py", common)
+        self.assertIn("remove_development_files", common)
+
+    def test_non_terminal_output_does_not_contain_color_codes(self) -> None:
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                'source "$1"; log_step check; log_success done',
+                "test",
+                str(COMMON),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env={"TERM": "dumb"},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("\x1b", result.stdout)
+        self.assertIn("==> check", result.stdout)
+        self.assertIn("✓ done", result.stdout)
+
     def test_bootstrap_does_not_depend_on_git(self) -> None:
         content = INSTALLER.read_text(encoding="utf-8")
         self.assertIn("wget", content)
@@ -155,6 +183,26 @@ class InstallScriptTest(unittest.TestCase):
         self.assertFalse(
             conflicts("10.133.0.1:5353", 'users:(("dnsdist",pid=1,fd=2))')
         )
+
+    def test_mihomo_udp_listener_check_accepts_wildcard_socket(self) -> None:
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                (
+                    'source "$1"; '
+                    "ss() { printf '%s\\n' "
+                    "'udp UNCONN 0 0 *:253 *:* users:((\"mihomo\",pid=1,fd=2))'; }; "
+                    'check_mihomo_listener "127.0.0.1:253"'
+                ),
+                "test",
+                str(COMMON),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":

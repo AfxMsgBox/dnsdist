@@ -191,7 +191,7 @@ flowchart LR
     Dump["wg show wg-pub dump"] --> Parse["解析 Peer"]
     Parse --> Endpoint{"Endpoint 是可接受地址？"}
     Endpoint -->|否| Skip["跳过该 Peer"]
-    Endpoint -->|是| Prefix["公网 IP 归一化为 /24 或 /56"]
+    Endpoint -->|是| Prefix["使用完整公网 IP（/32 或 /128）"]
     Prefix --> Allowed["筛选 WG 网络内的 AllowedIPs"]
     Allowed --> Mapping["查询源网段 → ECS 网段"]
     Mapping --> Lua["生成 ecs-rules.lua"]
@@ -199,8 +199,8 @@ flowchart LR
 
 默认只接受全局可路由 Endpoint：
 
-- IPv4 Endpoint 默认归一化为 `/24`。
-- IPv6 Endpoint 默认归一化为 `/56`。
+- IPv4 Endpoint 默认作为 `/32` ECS 发送。
+- IPv6 Endpoint 默认作为 `/128` ECS 发送。
 - 私网、回环、保留和文档地址默认不参与 ECS。
 - `DNSDIST_ECS_ALLOW_NON_GLOBAL=1` 可显式允许非公网地址。
 
@@ -268,7 +268,7 @@ sequenceDiagram
 
 ## 9. 部署、更新与目录结构
 
-仓库根目录与集中安装目录一一对应：
+仓库中的运行文件按以下结构部署到集中安装目录；开发测试与 CI 文件仅保留在仓库：
 
 ```text
 config/
@@ -306,15 +306,19 @@ tests/
   test_manage_config.py               参数合并与校验测试
   test_update.py                      压缩包更新机制检查
   test_uninstall.py                   卸载边界与预览模式测试
+
+.github/workflows/test.yml            提交和 Pull Request 的开发测试
 ```
+
+`tests/` 与 `.github/` 只存在于开发仓库和下载压缩包中，不进入最终安装目录。安装器和更新器不在用户机器执行这些测试。
 
 ### 9.1 单文件引导安装
 
-独立下载的 `install.sh` 内置最小引导逻辑。它提示安装目录，优先用 `wget`、回退到 `curl` 下载 GitHub `main` 分支压缩包。安装器不会调用软件包管理器；下载工具、dnsdist、WireGuard 工具、Python 3 等缺失时，它会列出缺失命令和建议的手动安装命令，然后退出。完整压缩包先解压到临时目录，再由其中的完整安装器部署或刷新目标目录。
+独立下载的 `install.sh` 内置最小引导逻辑。它提示安装目录，优先用 `wget`、回退到 `curl` 下载 GitHub `main` 分支压缩包。安装器不会调用软件包管理器；下载工具、dnsdist、WireGuard 工具、Python 3.10+ 等缺失时，它会列出缺失命令和建议的手动安装命令，然后退出。完整压缩包先解压到临时目录，再由其中的完整安装器部署或刷新目标目录。
 
-安装器逐项提示模板中的全部运行参数，并验证监听地址、监听端口、网络、接口名、上游地址、URL 和阈值。全新安装时，配置管理器读取运行中的 WireGuard 接口及 IPv4 地址，找不到运行地址时回退到 `/etc/wireguard/*.conf`；同时遍历运行进程，从 Mihomo 的 `-d` / `--dir` 或 `-f` / `--config` 参数定位 YAML 配置并读取 `dns.enable`、`dns.listen`。通配监听会规范化为本机访问地址，例如 `:253` 转为 `127.0.0.1:253`。
+安装器只提示 WireGuard、dnsdist 监听地址、Mihomo 和 AliDNS 等必要运行参数，并验证监听地址、监听端口、网络、接口名和上游地址。规则 URL、下载限制、ECS 前缀和格式漂移阈值保留为配置文件中的高级参数。全新安装时，配置管理器读取运行中的 WireGuard 接口及 IPv4 地址，找不到运行地址时回退到 `/etc/wireguard/*.conf`；同时遍历运行进程，从 Mihomo 的 `-d` / `--dir` 或 `-f` / `--config` 参数定位 YAML 配置并读取 `dns.enable`、`dns.listen`。通配监听会规范化为本机访问地址，例如 `:253` 转为 `127.0.0.1:253`。
 
-配置合并优先级固定为：安装命令行覆盖值 > 已有项目或旧版配置 > 系统检测值 > 仓库模板。已有安装不会因当前运行状态变化而静默改写本机配置。监听端口由 `DNSDIST_WG_DNS_PORT` 保存，模板默认值为 `53`，也可由单文件入口的 `--dns-port` 参数覆盖。写入系统前还会验证目录结构、WireGuard 接口和监听地址，并从 `dnsdist.service` 自动识别运行组，以兼容 `_dnsdist` 或 `dnsdist` 账户。
+配置合并优先级固定为：安装命令行覆盖值 > 已有项目或旧版配置 > 系统检测值 > 仓库模板。已有安装不会因当前运行状态变化而静默改写本机配置；旧的 ECS 默认 `/24`、`/56` 会迁移为完整地址 `/32`、`/128`，其他自定义前缀保持不变。监听端口由 `DNSDIST_WG_DNS_PORT` 保存，模板默认值为 `53`，也可由单文件入口的 `--dns-port` 参数覆盖。写入系统前还会验证 Python 版本、systemd、必要命令、目录结构、WireGuard 接口、监听地址、Mihomo UDP DNS 监听和端口冲突，并从 `dnsdist.service` 自动识别运行组，以兼容 `_dnsdist` 或 `dnsdist` 账户。
 
 单文件入口始终在临时目录展开新源码。目标安装目录为空时直接部署；目标目录是可识别的完整安装时，先以新版模板合并已有本机参数并保留生成规则，再通过同文件系统目录重命名刷新程序树。后续安装步骤失败时恢复原安装树，因此安装中断后可以直接重新运行单文件入口；未知非空目录仍拒绝覆盖。
 
@@ -332,10 +336,10 @@ tests/
 
 `update.sh` 下载完整压缩包并计算 SHA-256；与 `.source-sha256` 相同时直接结束。新包先在安装目录同一文件系统的临时目录中完成以下预检：
 
-1. 验证必须文件、Shell 语法和 Python 编译。
+1. 验证运行所需文件和目标主机环境，不执行开发测试。
 2. 以新版模板为基准，保留现有本机值并补充新增参数。
 3. 保留当前生成规则与 dnsdist 供应商配置备份。
-4. 渲染实际安装路径，运行离线测试和 dnsdist 配置检查。
+4. 移除开发测试和 CI 文件，渲染实际安装路径并运行 dnsdist 配置检查。
 
 预检通过后停止 timer 与 dnsdist，通过同文件系统目录重命名切换版本，再生成最新规则并启动服务。任一步失败都会把旧目录移回原路径并尝试恢复服务。成功后删除临时旧版本。
 
@@ -355,7 +359,7 @@ WireGuard 会根据成功认证的数据包更新 Peer Endpoint。因此公网�
 
 ### 10.3 ECS 是位置提示而非身份凭证
 
-ECS 网段来自 WireGuard 内核记录的最近 Endpoint，并按 `/24` 或 `/56` 聚合，只用于影响上游 DNS 调度。它不应作为访问控制或身份认证依据。
+ECS 地址来自 WireGuard 内核记录的最近 Endpoint，默认以完整 IPv4 `/32` 或 IPv6 `/128` 发送，只用于影响上游 DNS 调度。它不应作为访问控制或身份认证依据。
 
 ## 11. 已知限制
 

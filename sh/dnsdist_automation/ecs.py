@@ -47,8 +47,8 @@ def parse_endpoint_ip(endpoint: str) -> ipaddress.IPv4Address | ipaddress.IPv6Ad
 def endpoint_to_ecs(
     address: ipaddress.IPv4Address | ipaddress.IPv6Address,
     *,
-    prefix_v4: int = 24,
-    prefix_v6: int = 56,
+    prefix_v4: int = 32,
+    prefix_v6: int = 128,
 ) -> ipaddress.IPv4Network | ipaddress.IPv6Network:
     prefix = prefix_v4 if address.version == 4 else prefix_v6
     return ipaddress.ip_network(f"{address}/{prefix}", strict=False)
@@ -58,8 +58,8 @@ def parse_wg_dump(
     text: str,
     wg_network: ipaddress.IPv4Network | ipaddress.IPv6Network,
     *,
-    prefix_v4: int = 24,
-    prefix_v6: int = 56,
+    prefix_v4: int = 32,
+    prefix_v6: int = 128,
     allow_non_global: bool = False,
 ) -> list[PeerMapping]:
     mappings: dict[str, PeerMapping] = {}
@@ -197,8 +197,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             os.getenv("DNSDIST_WG_NETWORK", "10.133.0.0/24"),
             strict=False,
         )
-        prefix_v4 = int(os.getenv("DNSDIST_ECS_PREFIX_V4", "24"))
-        prefix_v6 = int(os.getenv("DNSDIST_ECS_PREFIX_V6", "56"))
+        prefix_v4 = int(os.getenv("DNSDIST_ECS_PREFIX_V4", "32"))
+        prefix_v6 = int(os.getenv("DNSDIST_ECS_PREFIX_V6", "128"))
         allow_non_global = env_bool("DNSDIST_ECS_ALLOW_NON_GLOBAL", False)
         dump = (
             args.dump_file.read_text(encoding="utf-8")

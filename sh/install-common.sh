@@ -2,8 +2,40 @@
 
 DNSDIST_REPOSITORY_ARCHIVE_DEFAULT="https://github.com/AfxMsgBox/dnsdist/archive/refs/heads/main.tar.gz"
 
+if [[ -t 1 && ${TERM:-dumb} != dumb && -z ${NO_COLOR:-} ]]; then
+  COLOR_RED=$'\033[31m'
+  COLOR_GREEN=$'\033[32m'
+  COLOR_YELLOW=$'\033[33m'
+  COLOR_CYAN=$'\033[36m'
+  COLOR_BOLD=$'\033[1m'
+  COLOR_RESET=$'\033[0m'
+else
+  COLOR_RED=''
+  COLOR_GREEN=''
+  COLOR_YELLOW=''
+  COLOR_CYAN=''
+  COLOR_BOLD=''
+  COLOR_RESET=''
+fi
+
+log_step() {
+  printf '%s%s==>%s %s\n' "${COLOR_BOLD}" "${COLOR_CYAN}" "${COLOR_RESET}" "$*"
+}
+
+log_success() {
+  printf '%s✓%s %s\n' "${COLOR_GREEN}" "${COLOR_RESET}" "$*"
+}
+
+log_warning() {
+  printf '%s!%s %s\n' "${COLOR_YELLOW}" "${COLOR_RESET}" "$*" >&2
+}
+
+log_info() {
+  printf '  %s•%s %s\n' "${COLOR_CYAN}" "${COLOR_RESET}" "$*"
+}
+
 die() {
-  printf '错误：%s\n' "$*" >&2
+  printf '%s✗ 错误：%s%s\n' "${COLOR_RED}" "$*" "${COLOR_RESET}" >&2
   exit 1
 }
 
@@ -49,9 +81,11 @@ ensure_dependencies() {
   local -a requirements=(
     'dnsdist:dnsdist'
     'ip:iproute2'
+    'ss:iproute2'
     'wg:wireguard-tools'
     'python3:python3'
     'systemctl:systemd'
+    'getent:libc-bin'
     'install:coreutils'
     'sha256sum:coreutils'
     'tar:tar'
@@ -77,15 +111,21 @@ ensure_dependencies() {
   if [[ ${#missing_commands[@]} -eq 0 ]]; then
     return
   fi
-  printf '错误：缺少必要命令：%s\n' "${missing_commands[*]}" >&2
+  log_warning "缺少必要命令：${missing_commands[*]}"
   if command -v apt-get >/dev/null 2>&1; then
-    printf '提示：请手动执行 apt-get update && apt-get install -y %s，然后重新运行本脚本。\n' \
-      "${packages[*]}" >&2
+    log_warning \
+      "请手动执行 apt-get update && apt-get install -y ${packages[*]}，然后重新运行本脚本。"
   else
-    printf '提示：请使用当前系统的软件包管理器安装：%s，然后重新运行本脚本。\n' \
-      "${packages[*]}" >&2
+    log_warning \
+      "请使用当前系统的软件包管理器安装：${packages[*]}，然后重新运行本脚本。"
   fi
   return 1
+}
+
+check_base_environment() {
+  python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 10))' || \
+    die '需要 Python 3.10 或更高版本'
+  [[ -d /run/systemd/system ]] || die '当前系统未使用 systemd 作为服务管理器'
 }
 
 required_source_paths() {
@@ -111,14 +151,7 @@ required_source_paths() {
     systemd/dnsdist-domain-update.timer \
     systemd/dnsdist-ecs-update.service \
     systemd/dnsdist-ecs-update.timer \
-    systemd/10-dnsdist-automation.conf \
-    tests/test_common.py \
-    tests/test_domains.py \
-    tests/test_ecs.py \
-    tests/test_install.py \
-    tests/test_manage_config.py \
-    tests/test_uninstall.py \
-    tests/test_update.py
+    systemd/10-dnsdist-automation.conf
 }
 
 source_is_complete() {
@@ -132,15 +165,11 @@ source_is_complete() {
 validate_source() {
   local root=$1
   source_is_complete "${root}" || die '下载的软件包结构不完整'
-  bash -n \
-    "${root}/sh/install.sh" \
-    "${root}/sh/update.sh" \
-    "${root}/sh/uninstall.sh" \
-    "${root}/sh/install-common.sh"
-  env PYTHONPYCACHEPREFIX="${TMPDIR:-/tmp}/dnsdist-python-cache" \
-    python3 -m compileall -q "${root}/sh" "${root}/tests"
-  env PYTHONPYCACHEPREFIX="${TMPDIR:-/tmp}/dnsdist-python-cache" \
-    python3 -m unittest discover -s "${root}/tests" -v
+}
+
+remove_development_files() {
+  local root=$1
+  rm -rf -- "${root}/tests" "${root}/.github"
 }
 
 extract_archive() {
@@ -176,7 +205,7 @@ safe_managed_link() {
   fi
   if [[ -e ${target} ]]; then
     if legacy_systemd_file_is_managed "${target}"; then
-      printf '迁移旧版项目文件：%s\n' "${target}"
+      log_info "迁移旧版项目文件：${target}"
       rm -f -- "${target}"
     else
       die "拒绝覆盖已有文件：${target}"
@@ -243,11 +272,40 @@ check_dns_listener_available() {
   if [[ ${#conflicts[@]} -eq 0 ]]; then
     return
   fi
-  printf '错误：dnsdist 监听地址 %s:%s 已被其他进程占用：\n' \
-    "${listen_ip}" "${listen_port}" >&2
+  log_warning "dnsdist 监听地址 ${listen_ip}:${listen_port} 已被其他进程占用："
   printf '  %s\n' "${conflicts[@]}" >&2
-  printf '%s\n' '提示：请先调整或停止占用程序；安装器不会自动停止其他服务。' >&2
+  log_warning '请先调整或停止占用程序；安装器不会自动停止其他服务。'
   return 1
+}
+
+check_mihomo_listener() {
+  local endpoint=$1
+  local host port protocol state recv_q send_q local_address peer_address process_info
+  if [[ ${endpoint} == \[*\]:* ]]; then
+    host=${endpoint#\[}
+    host=${host%%\]*}
+    port=${endpoint##*:}
+  else
+    host=${endpoint%:*}
+    port=${endpoint##*:}
+  fi
+  case "${host}" in
+    127.0.0.1|localhost|::1) ;;
+    *)
+      log_warning "Mihomo DNS 不是本机回环地址，跳过监听检查：${endpoint}"
+      return
+      ;;
+  esac
+  while read -r \
+    protocol state recv_q send_q local_address peer_address process_info; do
+    case "${local_address}" in
+      "*:${port}"|"0.0.0.0:${port}"|"[::]:${port}"|\
+        "127.0.0.1:${port}"|"[::1]:${port}")
+        return
+        ;;
+    esac
+  done < <(ss -H -lnup "sport = :${port}" 2>/dev/null || true)
+  die "Mihomo DNS 未监听 UDP ${endpoint}"
 }
 
 load_local_config() {

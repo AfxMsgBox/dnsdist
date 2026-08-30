@@ -22,13 +22,13 @@ WireGuard 客户端 -> dnsdist :53（端口可配置）
 | WireGuard 网络 | `10.133.0.0/24` |
 | Mihomo DNS | `127.0.0.1:253` |
 | AliDNS | `223.5.5.5:53`、`223.6.6.6:53` |
-| IPv4 / IPv6 ECS | `/24`、`/56` |
+| IPv4 / IPv6 ECS | `/32`、`/128`（完整 Endpoint IP） |
 | 域名更新时间 | 每 6 小时 |
 | Endpoint 检查间隔 | 60 秒 |
 
 全新安装时，安装器会先读取系统状态：WireGuard 优先读取正在运行的接口及其 IPv4 地址，必要时回退到 `/etc/wireguard/*.conf`；Mihomo 会从运行进程的 `-d` / `--dir` 或 `-f` / `--config` 参数定位配置文件，再读取 `dns.enable` 和 `dns.listen`。例如运行参数为 `mihomo -d /etc/proxy/core` 且配置中为 `listen: :253` 时，会使用 `127.0.0.1:253`。
 
-参数优先级为：命令行参数 > 已有项目或旧版配置 > 系统检测值 > 表中默认值。安装时会逐项提示全部参数，直接回车即可使用当前显示值。安装后的本机参数位于 `/opt/mydnsdist/config/dnsdist-automation`；dnsdist 和两个更新服务共用该文件。
+参数优先级为：命令行参数 > 已有项目或旧版配置 > 系统检测值 > 表中默认值。交互安装只询问 WireGuard、dnsdist 监听地址和上游 DNS 等必要参数；规则源、下载限制和安全阈值保留在配置文件中，不进入普通安装问答。安装后的本机参数位于 `/opt/mydnsdist/config/dnsdist-automation`；dnsdist 和两个更新服务共用该文件。
 
 ## 文件布局
 
@@ -56,14 +56,9 @@ systemd/
   dnsdist-domain-update.timer
   dnsdist-ecs-update.service
   dnsdist-ecs-update.timer
-tests/
-  test_install.py
-  test_manage_config.py
-  test_uninstall.py
-  test_update.py
 ```
 
-仓库根目录与安装目录一一对应，默认完整安装到 `/opt/mydnsdist`。`sh/` 存放部署和运行脚本，`config/` 保存本机配置，`generated/` 保存运行时规则，`systemd/` 保存服务单元。两个 `generated/*.lua` 初始为安全占位文件，安装后由更新器原子替换，不应手工编辑。
+默认运行文件安装到 `/opt/mydnsdist`。`sh/` 存放部署和运行脚本，`config/` 保存本机配置，`generated/` 保存运行时规则，`systemd/` 保存服务单元。仓库中的 `tests/` 和 `.github/` 只用于开发及 CI，不会安装到用户机器。两个 `generated/*.lua` 初始为安全占位文件，安装后由更新器原子替换，不应手工编辑。
 
 系统目录仅保留必要的软链接：dnsdist 主配置链接到安装目录，systemd 单元链接到 `systemd/`。项目文件不会复制到 `/usr/local`、`/etc/default` 或其他分散目录。
 
@@ -83,7 +78,7 @@ tests/
 - Mihomo 已监听 `127.0.0.1:253`。
 - 默认监听的 `10.133.0.1:53` 未被 AdGuard Home 或其他 DNS 服务占用，或者安装时指定其他空闲端口。
 - `/etc/dnsdist/dnsdist.yml` 不存在；dnsdist 2.1+ 可能优先加载它。
-- 目标系统使用 systemd，且已安装 Python 3、dnsdist、WireGuard 工具。
+- 目标系统使用 systemd，且已安装 Python 3.10+、dnsdist、WireGuard 工具。
 
 ## 安装
 
@@ -109,7 +104,9 @@ sudo bash install.sh --non-interactive --dns-port 5353
 
 端口必须位于 `1–65535`。命令行参数优先于已有配置；更新和重装会保留当前端口，除非再次传入 `--dns-port` 覆盖。
 
-安装脚本会优先使用 `wget` 下载 GitHub `main` 分支压缩包，没有 `wget` 时回退到 `curl`。脚本不会自动安装任何软件；缺少 dnsdist、WireGuard 工具、Python 3、下载工具或其他基础依赖时，会列出缺失命令和建议的手动安装命令，然后退出。
+安装脚本会优先使用 `wget` 下载 GitHub `main` 分支压缩包，没有 `wget` 时回退到 `curl`。脚本不会自动安装任何软件；缺少 dnsdist、WireGuard 工具、Python 3.10+、下载工具或其他基础依赖时，会列出缺失命令和建议的手动安装命令，然后退出。
+
+终端中的步骤、成功、警告和错误会使用不同颜色；输出被重定向或 `TERM=dumb` 时自动关闭颜色，也可显式执行 `NO_COLOR=1 sudo -E bash install.sh`。
 
 如果安装目录中已有可识别的完整项目结构，单文件安装器会保留本机参数、当前生成规则和供应商配置备份，原子刷新程序文件后继续安装。因此前一次安装在系统集成或服务启动阶段失败时，可以直接重新运行刚下载的 `install.sh`。非空目录不符合项目结构时仍会拒绝覆盖。
 
@@ -118,10 +115,10 @@ sudo bash install.sh --non-interactive --dns-port 5353
 安装过程会：
 
 1. 提示并建立集中安装目录。
-2. 检查必要软件；缺少时仅给出手动安装提示并退出。
-3. 下载并检查完整源码压缩包。
-4. 提示全部运行参数并验证地址、网络、端口和阈值。
-5. 检查配置的 `DNSDIST_WG_DNS_IP:DNSDIST_WG_DNS_PORT` 是否被其他程序占用；冲突时显示占用信息并退出。
+2. 检查 Python 版本、systemd 和所有必要命令；缺少时仅给出手动安装提示并退出。
+3. 下载程序包并检查运行文件结构，不执行开发测试。
+4. 提示必要运行参数并验证地址、网络和端口。
+5. 检查 dnsdist 端口冲突、WireGuard 状态和 Mihomo UDP DNS 监听。
 6. 自动识别 dnsdist 服务运行组并设置权限。
 7. 迁移可确认归属的旧版单元，只在系统目录建立必要软链接。
 8. 下载域名列表并读取 `wg show wg-pub dump`。
@@ -137,7 +134,7 @@ sudo bash install.sh --non-interactive --dns-port 5353
 sudo /opt/mydnsdist/sh/update.sh
 ```
 
-更新器先在同一文件系统的临时目录中验证脚本、Python 代码、离线测试和 dnsdist 配置，再切换安装目录。本机 `config/dnsdist-automation` 中的已有值与当前生成规则会保留，新版本增加的参数会使用新版默认值自动补充。服务启动失败时自动恢复上一版本。
+更新器先在同一文件系统的临时目录中检查运行文件结构、环境和 dnsdist 配置，再切换安装目录。它不会在用户机器运行开发测试，也不会部署仓库中的测试或 CI 文件。本机 `config/dnsdist-automation` 中的已有值与当前生成规则会保留，新版本增加的参数会使用新版默认值自动补充。服务启动失败时自动恢复上一版本。
 
 如需更新时重新逐项确认参数：
 
@@ -209,7 +206,7 @@ example.com
 
 1. 只处理位于 `DNSDIST_WG_NETWORK` 内的 AllowedIPs。
 2. 默认拒绝私网、回环、保留地址等非公网 Endpoint。
-3. 把 IPv4 Endpoint 归一为 `/24`，IPv6 Endpoint 归一为 `/56`。
+3. 默认把完整 IPv4 Endpoint 作为 `/32` ECS、完整 IPv6 Endpoint 作为 `/128` ECS，以提供最精确的地域信息。
 4. 为每个 Peer 生成 `SetECSOverrideAction`、`SetECSAction` 和 `PoolAction("china-ecs")`。
 5. 没有可用 Endpoint 的 Peer 落入 `china-noecs`。
 
@@ -254,7 +251,7 @@ sudo sed -n '1,240p' /opt/mydnsdist/generated/ecs-rules.lua
 
 ## 开发测试
 
-测试完全离线，不会下载真实规则或调用 WireGuard：
+测试由 GitHub Actions 在提交和 Pull Request 阶段自动执行，不会在安装或更新时运行。开发者也可在仓库中手工执行：
 
 ```bash
 python3 -m unittest discover -s tests -v

@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 
@@ -114,6 +116,34 @@ class ManageConfigTest(unittest.TestCase):
             ),
             [Path("/run/mihomo.yaml")],
         )
+
+    def test_old_ecs_defaults_are_migrated_to_full_addresses(self) -> None:
+        values = {
+            "DNSDIST_ECS_PREFIX_V4": "24",
+            "DNSDIST_ECS_PREFIX_V6": "56",
+        }
+        with redirect_stdout(StringIO()):
+            manage_config.migrate_old_defaults(values)
+        self.assertEqual(values["DNSDIST_ECS_PREFIX_V4"], "32")
+        self.assertEqual(values["DNSDIST_ECS_PREFIX_V6"], "128")
+
+        custom = {
+            "DNSDIST_ECS_PREFIX_V4": "20",
+            "DNSDIST_ECS_PREFIX_V6": "64",
+        }
+        manage_config.migrate_old_defaults(custom)
+        self.assertEqual(custom["DNSDIST_ECS_PREFIX_V4"], "20")
+        self.assertEqual(custom["DNSDIST_ECS_PREFIX_V6"], "64")
+
+    def test_advanced_parameters_are_not_interactive(self) -> None:
+        for name in (
+            "DNSDIST_ECS_PREFIX_V4",
+            "DNSDIST_ECS_PREFIX_V6",
+            "DNSDIST_MAX_DOWNLOAD_BYTES",
+            "DNSDIST_MAX_AD_REGEX_RULES",
+            "DNSDIST_MAX_UNSUPPORTED_AD_RATIO",
+        ):
+            self.assertNotIn(name, manage_config.INTERACTIVE_NAMES)
 
 
 if __name__ == "__main__":
