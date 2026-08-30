@@ -280,7 +280,7 @@ check_dns_listener_available() {
 
 check_mihomo_listener() {
   local endpoint=$1
-  local host port protocol state recv_q send_q local_address peer_address process_info
+  local host port state recv_q send_q local_address peer_address process_info
   if [[ ${endpoint} == \[*\]:* ]]; then
     host=${endpoint#\[}
     host=${host%%\]*}
@@ -297,7 +297,7 @@ check_mihomo_listener() {
       ;;
   esac
   while read -r \
-    protocol state recv_q send_q local_address peer_address process_info; do
+    state recv_q send_q local_address peer_address process_info; do
     case "${local_address}" in
       "*:${port}"|"0.0.0.0:${port}"|"[::]:${port}"|\
         "127.0.0.1:${port}"|"[::1]:${port}")

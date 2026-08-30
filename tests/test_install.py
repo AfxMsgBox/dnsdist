@@ -192,7 +192,7 @@ class InstallScriptTest(unittest.TestCase):
                 (
                     'source "$1"; '
                     "ss() { printf '%s\\n' "
-                    "'udp UNCONN 0 0 *:253 *:* users:((\"mihomo\",pid=1,fd=2))'; }; "
+                    "'UNCONN 0 0 *:253 *:* users:((\"mihomo\",pid=1,fd=2))'; }; "
                     'check_mihomo_listener "127.0.0.1:253"'
                 ),
                 "test",
