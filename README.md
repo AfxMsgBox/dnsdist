@@ -23,6 +23,7 @@ WireGuard 客户端 -> dnsdist :53（端口可配置）
 | Mihomo DNS | `127.0.0.1:253` |
 | AliDNS | `223.5.5.5:53`、`223.6.6.6:53` |
 | IPv4 / IPv6 ECS | `/32`、`/128`（完整 Endpoint IP） |
+| 查询日志 | 关闭；可写入 systemd journal |
 | 域名更新时间 | 每 6 小时 |
 | Endpoint 检查间隔 | 60 秒 |
 
@@ -281,6 +282,35 @@ example.com
 ```bash
 DNSDIST_ECS_ALLOW_NON_GLOBAL=1
 ```
+
+## 查询日志
+
+查询日志默认关闭。调试查询来源、域名和类型时，修改本机配置：
+
+```bash
+sudo sed -i 's/^DNSDIST_QUERY_LOG=.*/DNSDIST_QUERY_LOG=1/' \
+  /opt/mydnsdist/config/dnsdist-automation
+sudo systemctl restart dnsdist
+sudo journalctl -u dnsdist -f
+```
+
+关闭日志时改回 `0` 并重启：
+
+```bash
+sudo sed -i 's/^DNSDIST_QUERY_LOG=.*/DNSDIST_QUERY_LOG=0/' \
+  /opt/mydnsdist/config/dnsdist-automation
+sudo systemctl restart dnsdist
+```
+
+日志通过 dnsdist 的非终止 `LogAction` 写入标准输出，由 systemd journal 管理，不创建额外日志文件。它会记录客户端地址和查询域名，但不会显示发往上游的最终 ECS；ECS 仍需结合 `generated/ecs-rules.lua` 或抓取 AliDNS 上游流量验证。长期启用会增加日志 I/O 并暴露用户查询内容，建议只在排障期间开启。
+
+旧版本更新到包含该开关的版本时无需重新安装：
+
+```bash
+sudo /opt/mydnsdist/sh/update.sh
+```
+
+更新器会保留已有本机参数、自动补充默认关闭的 `DNSDIST_QUERY_LOG=0`，并验证及重启 dnsdist。
 
 ## 手动检查
 

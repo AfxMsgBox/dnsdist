@@ -85,6 +85,17 @@ class InstallScriptTest(unittest.TestCase):
         self.assertIn("curl", content)
         self.assertNotIn("git clone", content)
 
+    def test_query_log_switch_defaults_off_and_writes_to_stdout(self) -> None:
+        environment = (ROOT / "config/dnsdist-automation").read_text(encoding="utf-8")
+        dnsdist_config = (ROOT / "config/dnsdist.conf").read_text(encoding="utf-8")
+        self.assertIn("DNSDIST_QUERY_LOG=0", environment)
+        self.assertIn('os.getenv("DNSDIST_QUERY_LOG")', dnsdist_config)
+        self.assertIn('LogAction("", false, true, false, false)', dnsdist_config)
+        self.assertLess(
+            dnsdist_config.index('name = "query-log"'),
+            dnsdist_config.index("local domainRules = dofile"),
+        )
+
     def test_installer_only_suggests_manual_dependency_installation(self) -> None:
         content = "\n".join(
             (

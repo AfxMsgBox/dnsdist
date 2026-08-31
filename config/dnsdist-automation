@@ -7,6 +7,9 @@ DNSDIST_WG_DNS_PORT=53
 DNSDIST_WG_NETWORK=10.133.0.0/24
 DNSDIST_WG_INTERFACE=wg-pub
 
+# Set to 1 to log every query to the dnsdist systemd journal.
+DNSDIST_QUERY_LOG=0
+
 # Downstream DNS servers
 DNSDIST_MIHOMO_ADDRESS=127.0.0.1:253
 DNSDIST_ALIDNS_1=223.5.5.5:53

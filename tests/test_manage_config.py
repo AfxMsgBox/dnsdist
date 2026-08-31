@@ -31,6 +31,7 @@ class ManageConfigTest(unittest.TestCase):
             "DNSDIST_WG_DNS_IP=10.0.0.1\n"
             "DNSDIST_WG_DNS_PORT=53\n"
             "DNSDIST_WG_NETWORK=10.0.0.0/24\n"
+            "DNSDIST_QUERY_LOG=0\n"
             "A=one\nB=two\n"
         )
         rendered = manage_config.render_config(
@@ -41,6 +42,7 @@ class ManageConfigTest(unittest.TestCase):
         )
         self.assertIn("DNSDIST_INSTALL_DIR=/srv/dnsdist", rendered)
         self.assertIn("DNSDIST_WG_DNS_PORT=53", rendered)
+        self.assertIn("DNSDIST_QUERY_LOG=0", rendered)
         self.assertIn("A='local value'", rendered)
         self.assertIn("B=two", rendered)
         self.assertIn("OLD=kept", rendered)
@@ -174,11 +176,18 @@ class ManageConfigTest(unittest.TestCase):
         for name in (
             "DNSDIST_ECS_PREFIX_V4",
             "DNSDIST_ECS_PREFIX_V6",
+            "DNSDIST_QUERY_LOG",
             "DNSDIST_MAX_DOWNLOAD_BYTES",
             "DNSDIST_MAX_AD_REGEX_RULES",
             "DNSDIST_MAX_UNSUPPORTED_AD_RATIO",
         ):
             self.assertNotIn(name, manage_config.INTERACTIVE_NAMES)
+
+    def test_query_log_switch_accepts_only_zero_or_one(self) -> None:
+        manage_config.VALIDATORS["DNSDIST_QUERY_LOG"]("0")
+        manage_config.VALIDATORS["DNSDIST_QUERY_LOG"]("1")
+        with self.assertRaises(ValueError):
+            manage_config.VALIDATORS["DNSDIST_QUERY_LOG"]("yes")
 
 
 if __name__ == "__main__":
