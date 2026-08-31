@@ -99,7 +99,11 @@ class DomainRulesTest(unittest.TestCase):
         self.assertIn("newDNSNameSet()", rendered)
         self.assertIn("QNameSetRule", rendered)
         self.assertIn("newSuffixMatchNode()", rendered)
-        self.assertIn("QNameSuffixRule(adBlockRegexSuffix, true)", rendered)
+        self.assertIn(
+            "local makeSuffixRule = QNameSuffixRule or SuffixMatchNodeRule", rendered
+        )
+        self.assertIn("makeSuffixRule(adBlockRegexSuffix, true)", rendered)
+        self.assertNotIn("QNameSuffixRule(adBlockRegexSuffix, true)", rendered)
         self.assertIn("QTypeRule(DNSQType.A)", rendered)
         self.assertIn("return result", rendered)
         self.assertIn('"example.com"', rendered)

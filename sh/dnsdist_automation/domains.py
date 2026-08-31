@@ -644,7 +644,7 @@ def _render_bucket(
                 f"  {_lua_string(domain)}," for domain in domains[offset : offset + 5000]
             )
             lines.append("})")
-        _append_selector(lines, category, f"QNameSuffixRule({name}, true)", qtypes)
+        _append_selector(lines, category, f"makeSuffixRule({name}, true)", qtypes)
         lines.append("")
 
     hinted: list[tuple[str, str]] = []
@@ -663,7 +663,7 @@ def _render_bucket(
         lines.extend(f"  {_lua_string(value)}," for value in minimize_suffixes(h for _, h in hinted))
         lines.append("})")
         regex_selector = _regex_selector(expression for expression, _ in hinted)
-        selector = f"AndRule({{QNameSuffixRule({hint_name}, true), {regex_selector}}})"
+        selector = f"AndRule({{makeSuffixRule({hint_name}, true), {regex_selector}}})"
         _append_selector(lines, category, selector, qtypes)
         lines.append("")
 
@@ -690,6 +690,10 @@ def render_domain_rules(ad_rules: AdRules, proxy_rules: RuleBucket) -> str:
         ),
         "",
         "local result = { important = {}, allow = {}, block = {}, proxy = {} }",
+        "local makeSuffixRule = QNameSuffixRule or SuffixMatchNodeRule",
+        "if makeSuffixRule == nil then",
+        '  error("dnsdist does not provide a suffix-match rule selector")',
+        "end",
         "",
     ]
     _render_bucket(lines, "important", ad_rules.important, "adImportant")

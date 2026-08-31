@@ -254,7 +254,7 @@ example.com
 转换器按语义分别生成 dnsdist 数据结构：
 
 - 普通域名和 hosts 格式是精确匹配，使用 `DNSNameSet` / `QNameSetRule`。
-- `||example.com^` 及代理列表域名是后缀匹配，使用 `SuffixMatchNode` / `QNameSuffixRule`。
+- `||example.com^` 及代理列表域名使用 `SuffixMatchNode` 后缀树；dnsdist 1.9.0+ 调用 `QNameSuffixRule()`，旧版本自动回退到 `SuffixMatchNodeRule()`，已兼容 dnsdist 1.7.3。
 - 能证明等价的正则会降级为精确或后缀匹配；其余正则保留为 `RegexRule`。如果能提取必需的固定域名后缀，会先经过后缀树预筛选再运行正则。
 - 支持 AdGuard 的例外规则、`important`、`badfilter` 和正向 `dnstype`。带有其他修饰符的规则不会被错误简化，而是跳过并计入报告。
 

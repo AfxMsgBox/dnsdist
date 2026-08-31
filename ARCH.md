@@ -109,7 +109,7 @@ AliDNS 的 ECS 和无 ECS Server 对象彼此独立，因为 `useClientSubnet` �
 | 类型 | dnsdist 结构 | 语义 |
 | --- | --- | --- |
 | 精确域名 | `DNSNameSet` + `QNameSetRule` | 只匹配指定名称 |
-| 域名后缀 | `SuffixMatchNode` + `QNameSuffixRule` | 匹配域名及其子域名 |
+| 域名后缀 | `SuffixMatchNode` + 兼容后缀选择器 | 匹配域名及其子域名 |
 | 正则表达式 | `RegexRule` | 保留无法安全简化的表达式 |
 
 广告规则进一步划分为：
@@ -165,6 +165,8 @@ important / allow / block / proxy
 ```
 
 主配置注册其中的选择器后释放构建期间的临时 Lua 表，并主动执行一次垃圾回收，减少规则加载后的临时内存占用。
+
+生成文件运行时优先使用 dnsdist 1.9.0+ 的 `QNameSuffixRule()`，旧版本则回退到等价的 `SuffixMatchNodeRule()`。所有调用都传入预先构建的 `SuffixMatchNode`，因此两种接口保持相同的后缀树匹配语义，并兼容当前实际使用的 dnsdist 1.7.3。
 
 ## 6. WireGuard Endpoint 到 ECS 流水线
 

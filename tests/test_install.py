@@ -129,7 +129,7 @@ class InstallScriptTest(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(target.is_symlink())
-            self.assertEqual(target.resolve(), source)
+            self.assertEqual(target.resolve(), source.resolve())
 
     def test_unrelated_unit_is_not_overwritten(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
