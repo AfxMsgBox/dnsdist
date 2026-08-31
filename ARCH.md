@@ -216,6 +216,8 @@ flowchart LR
 2. `SetECSAction(...)`：写入从 Peer Endpoint 推导出的 ECS 网段。
 3. `PoolAction("china-ecs")`：选择启用 ECS 的 AliDNS 池。
 
+生成器先通过 `newNMG()` 和 `addMask()` 为查询源网段创建 `NetmaskGroup`，再传给 `NetmaskGroupRule()`。这种对象形式同时兼容 dnsdist 1.7.3 和 1.9.0+；后者虽然允许直接传入字符串，但对象形式仍然有效。
+
 没有可用 Endpoint 的 Peer 不生成专用规则，最终落入 `china-noecs`。
 
 ### 6.4 更新触发方式
@@ -318,7 +320,7 @@ tests/
 
 独立下载的 `install.sh` 内置最小引导逻辑。它提示安装目录，优先用 `wget`、回退到 `curl` 下载 GitHub `main` 分支压缩包。安装器不会调用软件包管理器；下载工具、dnsdist、WireGuard 工具、Python 3.10+ 等缺失时，它会列出缺失命令和建议的手动安装命令，然后退出。完整压缩包先解压到临时目录，再由其中的完整安装器部署或刷新目标目录。
 
-安装器只提示 WireGuard、dnsdist 监听地址、Mihomo 和 AliDNS 等必要运行参数，并验证监听地址、监听端口、网络、接口名和上游地址。规则 URL、下载限制、ECS 前缀和格式漂移阈值保留为配置文件中的高级参数。全新安装时，配置管理器读取运行中的 WireGuard 接口及 IPv4 地址，找不到运行地址时回退到 `/etc/wireguard/*.conf`；同时遍历运行进程，从 Mihomo 的 `-d` / `--dir` 或 `-f` / `--config` 参数定位 YAML 配置并读取 `dns.enable`、`dns.listen`。通配监听会规范化为本机访问地址，例如 `:253` 转为 `127.0.0.1:253`。
+安装器只提示 WireGuard、dnsdist 监听地址、Mihomo 和 AliDNS 等必要运行参数，并验证监听地址、监听端口、网络、接口名和上游地址。规则 URL、下载限制、ECS 前缀和格式漂移阈值保留为配置文件中的高级参数。全新安装时，配置管理器列出所有运行中的 WireGuard 接口以及 `/etc/wireguard/*.conf` 中的未运行接口，并显示各接口的运行状态、IPv4 地址和网络；自动检测找不到运行地址时回退到对应配置文件。该列表只提供输入参考，不改变现有默认值和参数选择逻辑。同时遍历运行进程，从 Mihomo 的 `-d` / `--dir` 或 `-f` / `--config` 参数定位 YAML 配置并读取 `dns.enable`、`dns.listen`。通配监听会规范化为本机访问地址，例如 `:253` 转为 `127.0.0.1:253`。
 
 配置合并优先级固定为：安装命令行覆盖值 > 已有项目或旧版配置 > 系统检测值 > 仓库模板。已有安装不会因当前运行状态变化而静默改写本机配置；旧的 ECS 默认 `/24`、`/56` 会迁移为完整地址 `/32`、`/128`，其他自定义前缀保持不变。监听端口由 `DNSDIST_WG_DNS_PORT` 保存，模板默认值为 `53`，也可由单文件入口的 `--dns-port` 参数覆盖。写入系统前还会验证 Python 版本、systemd、必要命令、目录结构、WireGuard 接口、监听地址、Mihomo UDP DNS 监听和端口冲突，并从 `dnsdist.service` 自动识别运行组，以兼容 `_dnsdist` 或 `dnsdist` 账户。
 

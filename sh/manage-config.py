@@ -51,6 +51,22 @@ MIGRATED_DEFAULTS = {
 }
 
 
+class WireGuardInterfaceInfo:
+    def __init__(
+        self,
+        name: str,
+        running: bool,
+        ip: str | None = None,
+        network: str | None = None,
+        address_source: str | None = None,
+    ) -> None:
+        self.name = name
+        self.running = running
+        self.ip = ip
+        self.network = network
+        self.address_source = address_source
+
+
 def parse_value(raw: str) -> str:
     if not raw:
         return ""
@@ -196,20 +212,59 @@ def _run_command(arguments: Sequence[str]) -> str:
     return result.stdout if result.returncode == 0 else ""
 
 
-def detect_wireguard_values(
-    preferred_interface: str | None = None,
-    *,
-    config_dir: Path = Path("/etc/wireguard"),
-) -> dict[str, str]:
-    running = _run_command(("wg", "show", "interfaces")).split()
+def inspect_wireguard_interfaces(
+    *, config_dir: Path = Path("/etc/wireguard")
+) -> list[WireGuardInterfaceInfo]:
+    running = list(dict.fromkeys(_run_command(("wg", "show", "interfaces")).split()))
     config_names = (
         sorted(path.stem for path in config_dir.glob("*.conf"))
         if config_dir.is_dir()
         else []
     )
     candidates = list(dict.fromkeys((*running, *config_names)))
-    if not candidates:
+    running_set = set(running)
+    interfaces: list[WireGuardInterfaceInfo] = []
+    for interface in candidates:
+        address = parse_wireguard_ipv4(
+            _run_command(("ip", "-o", "-4", "address", "show", "dev", interface))
+        )
+        address_source = "runtime" if address is not None else None
+        config_path = config_dir / f"{interface}.conf"
+        if address is None and config_path.is_file():
+            try:
+                address = parse_wireguard_ipv4(config_path.read_text(encoding="utf-8"))
+            except OSError:
+                pass
+            if address is not None:
+                address_source = "config"
+        ip, network = address if address is not None else (None, None)
+        interfaces.append(
+            WireGuardInterfaceInfo(
+                name=interface,
+                running=interface in running_set,
+                ip=ip,
+                network=network,
+                address_source=address_source,
+            )
+        )
+    return interfaces
+
+
+def detect_wireguard_values(
+    preferred_interface: str | None = None,
+    *,
+    config_dir: Path = Path("/etc/wireguard"),
+    interfaces: Sequence[WireGuardInterfaceInfo] | None = None,
+) -> dict[str, str]:
+    detected_interfaces = list(
+        interfaces
+        if interfaces is not None
+        else inspect_wireguard_interfaces(config_dir=config_dir)
+    )
+    if not detected_interfaces:
         return {}
+    candidates = [item.name for item in detected_interfaces]
+    running = [item.name for item in detected_interfaces if item.running]
     if preferred_interface in candidates:
         interface = preferred_interface
     elif len(running) == 1:
@@ -218,23 +273,13 @@ def detect_wireguard_values(
         interface = "wg-pub"
     else:
         interface = candidates[0]
-
-    address = parse_wireguard_ipv4(
-        _run_command(("ip", "-o", "-4", "address", "show", "dev", interface))
-    )
-    config_path = config_dir / f"{interface}.conf"
-    if address is None and config_path.is_file():
-        try:
-            address = parse_wireguard_ipv4(config_path.read_text(encoding="utf-8"))
-        except OSError:
-            pass
-    if address is None:
+    selected = next(item for item in detected_interfaces if item.name == interface)
+    if selected.ip is None or selected.network is None:
         return {"DNSDIST_WG_INTERFACE": interface}
-    ip, network = address
     return {
         "DNSDIST_WG_INTERFACE": interface,
-        "DNSDIST_WG_DNS_IP": ip,
-        "DNSDIST_WG_NETWORK": network,
+        "DNSDIST_WG_DNS_IP": selected.ip,
+        "DNSDIST_WG_NETWORK": selected.network,
     }
 
 
@@ -347,19 +392,34 @@ def detect_mihomo_values(*, proc_root: Path = Path("/proc")) -> dict[str, str]:
 
 def detect_system_values(
     preferred_interface: str | None = None,
+    *,
+    wireguard_interfaces: Sequence[WireGuardInterfaceInfo] | None = None,
 ) -> dict[str, str]:
-    values = detect_wireguard_values(preferred_interface)
+    values = detect_wireguard_values(
+        preferred_interface,
+        interfaces=wireguard_interfaces,
+    )
     values.update(detect_mihomo_values())
     return values
 
 
-def print_detected_values(values: dict[str, str]) -> None:
-    interface = values.get("DNSDIST_WG_INTERFACE")
-    address = values.get("DNSDIST_WG_DNS_IP")
-    network = values.get("DNSDIST_WG_NETWORK")
-    if interface:
-        detail = f"，地址 {address}，网络 {network}" if address and network else ""
-        print(f"检测到 WireGuard：{interface}{detail}")
+def print_detected_values(
+    values: dict[str, str],
+    wireguard_interfaces: Sequence[WireGuardInterfaceInfo] = (),
+) -> None:
+    if wireguard_interfaces:
+        print("检测到 WireGuard 接口：")
+        for interface in wireguard_interfaces:
+            status = "运行中" if interface.running else "未运行"
+            if interface.ip and interface.network:
+                prefix = ipaddress.ip_network(interface.network).prefixlen
+                source = "运行地址" if interface.address_source == "runtime" else "配置地址"
+                detail = (
+                    f"{source} {interface.ip}/{prefix}，网络 {interface.network}"
+                )
+            else:
+                detail = "未检测到 IPv4 地址"
+            print(f"  {interface.name}：{status}，{detail}")
     if "DNSDIST_MIHOMO_ADDRESS" in values:
         print(f"检测到 Mihomo DNS：{values['DNSDIST_MIHOMO_ADDRESS']}")
 
@@ -469,8 +529,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     migrate_old_defaults(current)
     values: dict[str, str] = {}
     if args.detect_system:
-        detected = detect_system_values(current.get("DNSDIST_WG_INTERFACE"))
-        print_detected_values(detected)
+        wireguard_interfaces = inspect_wireguard_interfaces()
+        detected = detect_system_values(
+            current.get("DNSDIST_WG_INTERFACE"),
+            wireguard_interfaces=wireguard_interfaces,
+        )
+        print_detected_values(detected, wireguard_interfaces)
         values.update(detected)
     values.update(current)
     fixed_values = {}

@@ -26,7 +26,7 @@ WireGuard 客户端 -> dnsdist :53（端口可配置）
 | 域名更新时间 | 每 6 小时 |
 | Endpoint 检查间隔 | 60 秒 |
 
-全新安装时，安装器会先读取系统状态：WireGuard 优先读取正在运行的接口及其 IPv4 地址，必要时回退到 `/etc/wireguard/*.conf`；Mihomo 会从运行进程的 `-d` / `--dir` 或 `-f` / `--config` 参数定位配置文件，再读取 `dns.enable` 和 `dns.listen`。例如运行参数为 `mihomo -d /etc/proxy/core` 且配置中为 `listen: :253` 时，会使用 `127.0.0.1:253`。
+全新安装时，安装器会先读取系统状态：列出所有运行中的 WireGuard 接口以及 `/etc/wireguard/*.conf` 中的未运行接口，并显示运行状态、IPv4 地址和网络，供用户输入接口名称时参考；现有默认值和参数选择逻辑保持不变。接口没有运行地址时会回退到对应配置文件。Mihomo 会从运行进程的 `-d` / `--dir` 或 `-f` / `--config` 参数定位配置文件，再读取 `dns.enable` 和 `dns.listen`。例如运行参数为 `mihomo -d /etc/proxy/core` 且配置中为 `listen: :253` 时，会使用 `127.0.0.1:253`。
 
 参数优先级为：命令行参数 > 已有项目或旧版配置 > 系统检测值 > 表中默认值。交互安装只询问 WireGuard、dnsdist 监听地址和上游 DNS 等必要参数；规则源、下载限制和安全阈值保留在配置文件中，不进入普通安装问答。安装后的本机参数位于 `/opt/mydnsdist/config/dnsdist-automation`；dnsdist 和两个更新服务共用该文件。
 
@@ -273,6 +273,8 @@ example.com
 3. 默认把完整 IPv4 Endpoint 作为 `/32` ECS、完整 IPv6 Endpoint 作为 `/128` ECS，以提供最精确的地域信息。
 4. 为每个 Peer 生成 `SetECSOverrideAction`、`SetECSAction` 和 `PoolAction("china-ecs")`。
 5. 没有可用 Endpoint 的 Peer 落入 `china-noecs`。
+
+查询源规则先通过 `newNMG()` 创建 `NetmaskGroup`，再交给 `NetmaskGroupRule()`，兼容 dnsdist 1.7.3 以及允许字符串参数的新版本。
 
 如果确实要把非公网 Endpoint 用作 ECS，可在环境文件中设置：
 

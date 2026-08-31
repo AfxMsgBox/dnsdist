@@ -6,6 +6,7 @@ import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -86,6 +87,40 @@ class ManageConfigTest(unittest.TestCase):
             ),
             ("10.133.0.1", "10.133.0.0/24"),
         )
+
+    def test_all_wireguard_interfaces_are_listed_with_status(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config_dir = Path(directory)
+            (config_dir / "wg-config.conf").write_text(
+                "[Interface]\nAddress = 10.20.0.1/24\n",
+                encoding="utf-8",
+            )
+
+            def run_command(arguments: tuple[str, ...]) -> str:
+                if arguments == ("wg", "show", "interfaces"):
+                    return "wg0 wg-pub\n"
+                if arguments[-1] == "wg0":
+                    return "7: wg0 inet 10.10.0.1/24 scope global wg0\n"
+                if arguments[-1] == "wg-pub":
+                    return "8: wg-pub inet 10.133.0.1/24 scope global wg-pub\n"
+                return ""
+
+            with patch.object(manage_config, "_run_command", side_effect=run_command):
+                interfaces = manage_config.inspect_wireguard_interfaces(
+                    config_dir=config_dir
+                )
+
+        self.assertEqual(
+            [item.name for item in interfaces],
+            ["wg0", "wg-pub", "wg-config"],
+        )
+        output = StringIO()
+        with redirect_stdout(output):
+            manage_config.print_detected_values({}, interfaces)
+        rendered = output.getvalue()
+        self.assertIn("wg0：运行中，运行地址 10.10.0.1/24", rendered)
+        self.assertIn("wg-pub：运行中，运行地址 10.133.0.1/24", rendered)
+        self.assertIn("wg-config：未运行，配置地址 10.20.0.1/24", rendered)
 
     def test_mihomo_runtime_arguments_and_dns_config(self) -> None:
         self.assertEqual(

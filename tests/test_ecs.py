@@ -45,7 +45,10 @@ class EcsRulesTest(unittest.TestCase):
         self.assertEqual(str(mappings[1].ecs), "2001:4860:4860::8888/128")
 
         rendered = render_ecs_rules(mappings)
-        self.assertIn('NetmaskGroupRule("10.68.0.10/32")', rendered)
+        self.assertIn("peerSourceNMG = newNMG()", rendered)
+        self.assertIn('peerSourceNMG:addMask("10.68.0.10/32")', rendered)
+        self.assertIn("NetmaskGroupRule(peerSourceNMG)", rendered)
+        self.assertNotIn('NetmaskGroupRule("10.68.0.10/32")', rendered)
         self.assertIn('SetECSAction("8.8.8.8/32")', rendered)
         self.assertIn('PoolAction("china-ecs")', rendered)
         self.assertNotIn("10.68.0.12", rendered)
