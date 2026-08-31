@@ -24,10 +24,13 @@ WireGuard 客户端 -> dnsdist :53（端口可配置）
 | AliDNS | `223.5.5.5:53`、`223.6.6.6:53` |
 | IPv4 / IPv6 ECS | `/32`、`/128`（完整 Endpoint IP） |
 | 查询日志 | 关闭；可写入 systemd journal |
+| 下载代理 | 默认直连；检测到 Mihomo HTTP/混合代理时询问 |
 | 域名更新时间 | 每 6 小时 |
 | Endpoint 检查间隔 | 60 秒 |
 
 全新安装时，安装器会先读取系统状态：列出所有运行中的 WireGuard 接口以及 `/etc/wireguard/*.conf` 中的未运行接口，并显示运行状态、IPv4 地址和网络，供用户输入接口名称时参考；现有默认值和参数选择逻辑保持不变。接口没有运行地址时会回退到对应配置文件。Mihomo 会从运行进程的 `-d` / `--dir` 或 `-f` / `--config` 参数定位配置文件，再读取 `dns.enable` 和 `dns.listen`。例如运行参数为 `mihomo -d /etc/proxy/core` 且配置中为 `listen: :253` 时，会使用 `127.0.0.1:253`。
+
+同一份 Mihomo 配置中的顶层 `mixed-port` 或 `port` 会被识别为本机 HTTP 兼容下载代理，优先使用 `mixed-port`。交互安装会询问是否使用；确认后写入 `/opt/mydnsdist/config/dnsdist-automation` 的 `DNSDIST_DOWNLOAD_PROXY`。该代理用于下载 GitHub 程序包及全部域名规则，后续 `update.sh` 和 systemd 定时域名更新也会继续使用。删除 `DNSDIST_DOWNLOAD_PROXY` 这一行或将值留空即可恢复直连。纯 `socks-port` 不会被自动选中，因为 wget 不能将它作为 HTTP 代理使用。
 
 参数优先级为：命令行参数 > 已有项目或旧版配置 > 系统检测值 > 表中默认值。交互安装只询问 WireGuard、dnsdist 监听地址和上游 DNS 等必要参数；规则源、下载限制和安全阈值保留在配置文件中，不进入普通安装问答。安装后的本机参数位于 `/opt/mydnsdist/config/dnsdist-automation`；dnsdist 和两个更新服务共用该文件。
 
@@ -83,31 +86,40 @@ systemd/
 
 ## 安装
 
+以下安装、更新、卸载和 systemd 命令均假定当前处于 root shell。
+
 只需下载一个安装脚本，不需要安装 Git：
 
 ```bash
 wget -O install.sh https://raw.githubusercontent.com/AfxMsgBox/dnsdist/main/sh/install.sh
-sudo bash install.sh
+bash install.sh
 ```
 
 安装脚本默认建议使用 `/opt/mydnsdist`，自动显示检测到的 WireGuard 和 Mihomo DNS 参数，再依次提示本机参数。直接回车使用当前值，也可以输入其他不含空白字符的绝对安装路径。非交互安装使用：
 
 ```bash
-sudo bash install.sh --non-interactive
+bash install.sh --non-interactive
 ```
 
 dnsdist 监听端口不会从 WireGuard 或 Mihomo 配置推断，未指定且没有已有项目配置时默认为 `53`。可在交互提示中输入其他端口，也可直接通过命令行指定：
 
 ```bash
-sudo bash install.sh --dns-port 5353
-sudo bash install.sh --non-interactive --dns-port 5353
+bash install.sh --dns-port 5353
+bash install.sh --non-interactive --dns-port 5353
+```
+
+非交互安装可明确指定或禁用下载代理：
+
+```bash
+bash install.sh --non-interactive --download-proxy http://127.0.0.1:7890
+bash install.sh --non-interactive --no-download-proxy
 ```
 
 端口必须位于 `1–65535`。命令行参数优先于已有配置；更新和重装会保留当前端口，除非再次传入 `--dns-port` 覆盖。
 
 安装脚本会优先使用 `wget` 下载 GitHub `main` 分支压缩包，没有 `wget` 时回退到 `curl`。脚本不会自动安装任何软件；缺少 dnsdist、WireGuard 工具、Python 3.10+、下载工具或其他基础依赖时，会列出缺失命令和建议的手动安装命令，然后退出。
 
-终端中的步骤、成功、警告和错误会使用不同颜色；输出被重定向或 `TERM=dumb` 时自动关闭颜色，也可显式执行 `NO_COLOR=1 sudo -E bash install.sh`。
+终端中的步骤、成功、警告和错误会使用不同颜色；输出被重定向或 `TERM=dumb` 时自动关闭颜色，也可显式执行 `NO_COLOR=1 bash install.sh`。
 
 如果安装目录中已有可识别的完整项目结构，单文件安装器会保留本机参数、当前生成规则和供应商配置备份，原子刷新程序文件后继续安装。因此前一次安装在系统集成或服务启动阶段失败时，可以直接重新运行刚下载的 `install.sh`。非空目录不符合项目结构时仍会拒绝覆盖。
 
@@ -123,7 +135,7 @@ sudo bash install.sh --non-interactive --dns-port 5353
 6. 自动识别 dnsdist 服务运行组并设置权限。
 7. 迁移可确认归属的旧版单元，只在系统目录建立必要软链接。
 8. 下载域名列表并读取 `wg show wg-pub dump`。
-9. 检查完整 dnsdist 配置，启动 dnsdist 和两个 timer。
+9. 检查完整 dnsdist 配置，启用并立即启动 dnsdist 和两个 timer。
 
 脚本不会自动停用 AdGuard Home，也不会修改 WireGuard 或防火墙配置。如果 AdGuard Home 等程序监听通配地址的 53 端口，可以调整其监听地址、停止该服务，或者让 dnsdist 使用其他端口。使用非 53 端口时，客户端或站点转发器也必须查询该端口。
 
@@ -132,15 +144,15 @@ sudo bash install.sh --non-interactive --dns-port 5353
 更新不依赖 Git，会重新下载 GitHub 压缩包：
 
 ```bash
-sudo /opt/mydnsdist/sh/update.sh
+/opt/mydnsdist/sh/update.sh
 ```
 
-更新器先在同一文件系统的临时目录中检查运行文件结构和环境，用新版本生成器重建规则并验证 dnsdist 配置，再切换安装目录。临时树中的 systemd 单元始终写入最终安装目录路径，并在切换前检查不存在临时路径或未替换的占位符。它不会在用户机器运行开发测试，也不会部署仓库中的测试或 CI 文件。本机 `config/dnsdist-automation` 中的已有值会保留，新版本增加的参数会使用新版默认值自动补充。服务启动失败时先显示 dnsdist 状态和近期 journal，再自动恢复上一版本。
+更新器先读取已保存的 `DNSDIST_DOWNLOAD_PROXY`，通过它下载新版压缩包；随后在同一文件系统的临时目录中检查运行文件结构和环境，用新版本生成器通过相同代理重建规则并验证 dnsdist 配置，再切换安装目录。临时树中的 systemd 单元始终写入最终安装目录路径，并在切换前检查不存在临时路径或未替换的占位符。它不会在用户机器运行开发测试，也不会部署仓库中的测试或 CI 文件。本机 `config/dnsdist-automation` 中的已有值会保留，新版本增加的参数会使用新版默认值自动补充。服务启动失败时先显示 dnsdist 状态和近期 journal，再自动恢复上一版本。
 
 如需更新时重新逐项确认参数：
 
 ```bash
-sudo /opt/mydnsdist/sh/update.sh --configure
+/opt/mydnsdist/sh/update.sh --configure
 ```
 
 ## 系统修改与卸载
@@ -161,13 +173,13 @@ sudo /opt/mydnsdist/sh/update.sh --configure
 默认卸载会停止并禁用 dnsdist 及更新定时器，移除系统软链接，但保留安装目录：
 
 ```bash
-sudo /opt/mydnsdist/sh/uninstall.sh
+/opt/mydnsdist/sh/uninstall.sh
 ```
 
 如需同时删除完整集中安装目录：
 
 ```bash
-sudo /opt/mydnsdist/sh/uninstall.sh --purge
+/opt/mydnsdist/sh/uninstall.sh --purge
 ```
 
 执行前可预览全部操作；预览模式不要求 root 权限：
@@ -186,48 +198,48 @@ sudo /opt/mydnsdist/sh/uninstall.sh --purge
 先停止并禁用服务：
 
 ```bash
-sudo systemctl disable --now dnsdist-domain-update.timer dnsdist-ecs-update.timer
-sudo systemctl stop dnsdist-domain-update.service dnsdist-ecs-update.service
-sudo systemctl disable --now dnsdist.service
+systemctl disable --now dnsdist-domain-update.timer dnsdist-ecs-update.timer
+systemctl stop dnsdist-domain-update.service dnsdist-ecs-update.service
+systemctl disable --now dnsdist.service
 ```
 
 删除本项目的 systemd 软链接：
 
 ```bash
-sudo rm -f -- /etc/systemd/system/dnsdist-domain-update.service
-sudo rm -f -- /etc/systemd/system/dnsdist-domain-update.timer
-sudo rm -f -- /etc/systemd/system/dnsdist-ecs-update.service
-sudo rm -f -- /etc/systemd/system/dnsdist-ecs-update.timer
-sudo rm -f -- /etc/systemd/system/dnsdist.service.d/10-dnsdist-automation.conf
-sudo rmdir /etc/systemd/system/dnsdist.service.d 2>/dev/null || true
+rm -f -- /etc/systemd/system/dnsdist-domain-update.service
+rm -f -- /etc/systemd/system/dnsdist-domain-update.timer
+rm -f -- /etc/systemd/system/dnsdist-ecs-update.service
+rm -f -- /etc/systemd/system/dnsdist-ecs-update.timer
+rm -f -- /etc/systemd/system/dnsdist.service.d/10-dnsdist-automation.conf
+rmdir /etc/systemd/system/dnsdist.service.d 2>/dev/null || true
 ```
 
 仅在 dnsdist 主配置确实指向本项目时删除它：
 
 ```bash
 if [ "$(readlink /etc/dnsdist/dnsdist.conf 2>/dev/null)" = "/opt/mydnsdist/config/dnsdist.conf" ]; then
-  sudo rm -f -- /etc/dnsdist/dnsdist.conf
+  rm -f -- /etc/dnsdist/dnsdist.conf
 fi
 ```
 
 恢复安装前的 dnsdist 配置，然后删除安装目录：
 
 ```bash
-if ! sudo test -e /etc/dnsdist/dnsdist.conf && \
-   ! sudo test -L /etc/dnsdist/dnsdist.conf && \
-   sudo test -f /opt/mydnsdist/config/vendor-dnsdist.conf.backup; then
-  sudo mv /opt/mydnsdist/config/vendor-dnsdist.conf.backup /etc/dnsdist/dnsdist.conf
+if ! test -e /etc/dnsdist/dnsdist.conf && \
+   ! test -L /etc/dnsdist/dnsdist.conf && \
+   test -f /opt/mydnsdist/config/vendor-dnsdist.conf.backup; then
+  mv /opt/mydnsdist/config/vendor-dnsdist.conf.backup /etc/dnsdist/dnsdist.conf
 fi
 
-sudo rm -rf -- /opt/mydnsdist
-sudo systemctl daemon-reload
-sudo systemctl reset-failed
+rm -rf -- /opt/mydnsdist
+systemctl daemon-reload
+systemctl reset-failed
 ```
 
 如果恢复了原配置并希望继续使用软件包自带的 dnsdist，可重新启动：
 
 ```bash
-sudo systemctl enable --now dnsdist.service
+systemctl enable --now dnsdist.service
 ```
 
 ## 规则来源
@@ -288,18 +300,18 @@ DNSDIST_ECS_ALLOW_NON_GLOBAL=1
 查询日志默认关闭。调试查询来源、域名和类型时，修改本机配置：
 
 ```bash
-sudo sed -i 's/^DNSDIST_QUERY_LOG=.*/DNSDIST_QUERY_LOG=1/' \
+sed -i 's/^DNSDIST_QUERY_LOG=.*/DNSDIST_QUERY_LOG=1/' \
   /opt/mydnsdist/config/dnsdist-automation
-sudo systemctl restart dnsdist
-sudo journalctl -u dnsdist -f
+systemctl restart dnsdist
+journalctl -u dnsdist -f
 ```
 
 关闭日志时改回 `0` 并重启：
 
 ```bash
-sudo sed -i 's/^DNSDIST_QUERY_LOG=.*/DNSDIST_QUERY_LOG=0/' \
+sed -i 's/^DNSDIST_QUERY_LOG=.*/DNSDIST_QUERY_LOG=0/' \
   /opt/mydnsdist/config/dnsdist-automation
-sudo systemctl restart dnsdist
+systemctl restart dnsdist
 ```
 
 日志通过 dnsdist 的非终止 `LogAction` 写入标准输出，由 systemd journal 管理，不创建额外日志文件。它会记录客户端地址和查询域名，但不会显示发往上游的最终 ECS；ECS 仍需结合 `generated/ecs-rules.lua` 或抓取 AliDNS 上游流量验证。长期启用会增加日志 I/O 并暴露用户查询内容，建议只在排障期间开启。
@@ -307,7 +319,7 @@ sudo systemctl restart dnsdist
 旧版本更新到包含该开关的版本时无需重新安装：
 
 ```bash
-sudo /opt/mydnsdist/sh/update.sh
+/opt/mydnsdist/sh/update.sh
 ```
 
 更新器会保留已有本机参数、自动补充默认关闭的 `DNSDIST_QUERY_LOG=0`，并验证及重启 dnsdist。
@@ -315,10 +327,10 @@ sudo /opt/mydnsdist/sh/update.sh
 ## 手动检查
 
 ```bash
-sudo /opt/mydnsdist/sh/update-dnsdist-domains.py
-sudo /opt/mydnsdist/sh/update-dnsdist-domains.py --stats-only
-sudo /opt/mydnsdist/sh/update-dnsdist-ecs.py
-sudo dnsdist --check-config -C /opt/mydnsdist/config/dnsdist.conf
+/opt/mydnsdist/sh/update-dnsdist-domains.py
+/opt/mydnsdist/sh/update-dnsdist-domains.py --stats-only
+/opt/mydnsdist/sh/update-dnsdist-ecs.py
+dnsdist --check-config -C /opt/mydnsdist/config/dnsdist.conf
 systemctl status dnsdist
 systemctl list-timers 'dnsdist-*'
 ```
@@ -342,7 +354,7 @@ dig -p 5353 @10.133.0.1 qq.com
 查看实际 ECS 映射：
 
 ```bash
-sudo sed -n '1,240p' /opt/mydnsdist/generated/ecs-rules.lua
+sed -n '1,240p' /opt/mydnsdist/generated/ecs-rules.lua
 ```
 
 ## 开发测试

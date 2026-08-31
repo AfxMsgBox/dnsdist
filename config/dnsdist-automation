@@ -26,6 +26,9 @@ DNSDIST_PROXY_URLS=https://raw.githubusercontent.com/AfxMsgBox/MyRule/main/domai
 DNSDIST_AD_URL=https://adguardteam.github.io/HostlistsRegistry/assets/filter_29.txt
 
 # Downloader limits
+# Optional HTTP/HTTPS proxy used for GitHub archives and domain-rule downloads.
+# Delete this line or leave it empty to connect directly.
+DNSDIST_DOWNLOAD_PROXY=
 DNSDIST_FETCH_TIMEOUT=30
 DNSDIST_MAX_DOWNLOAD_BYTES=52428800
 

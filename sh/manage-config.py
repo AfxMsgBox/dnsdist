@@ -30,6 +30,7 @@ PROMPTS = {
     "DNSDIST_ECS_ALLOW_NON_GLOBAL": "是否允许非公网 Endpoint（0/1）",
     "DNSDIST_PROXY_URLS": "代理域名规则 URL（逗号分隔）",
     "DNSDIST_AD_URL": "广告规则 URL",
+    "DNSDIST_DOWNLOAD_PROXY": "下载代理 URL",
     "DNSDIST_FETCH_TIMEOUT": "下载超时秒数",
     "DNSDIST_MAX_DOWNLOAD_BYTES": "单个规则文件最大字节数",
     "DNSDIST_MAX_AD_REGEX_RULES": "广告正则规则数量上限",
@@ -156,6 +157,11 @@ def validate_url(value: str) -> None:
         raise ValueError("必须是有效的 HTTP 或 HTTPS URL")
 
 
+def validate_optional_url(value: str) -> None:
+    if value:
+        validate_url(value)
+
+
 def validate_urls(value: str) -> None:
     urls = [item.strip() for item in value.split(",") if item.strip()]
     if not urls:
@@ -178,6 +184,7 @@ VALIDATORS: dict[str, Callable[[str], None]] = {
     "DNSDIST_ECS_ALLOW_NON_GLOBAL": validate_bool,
     "DNSDIST_PROXY_URLS": validate_urls,
     "DNSDIST_AD_URL": validate_url,
+    "DNSDIST_DOWNLOAD_PROXY": validate_optional_url,
     "DNSDIST_FETCH_TIMEOUT": validate_positive_number,
     "DNSDIST_MAX_DOWNLOAD_BYTES": lambda value: validate_integer(
         value, 1, 2**63 - 1
@@ -359,6 +366,24 @@ def parse_mihomo_dns(text: str) -> str | None:
     return normalize_mihomo_listen(listen) if enabled and listen else None
 
 
+def parse_mihomo_download_proxy(text: str) -> str | None:
+    ports: dict[str, str] = {}
+    for raw_line in text.splitlines():
+        if not raw_line or raw_line[0].isspace():
+            continue
+        match = re.match(
+            r"(mixed-port|port)\s*:\s*([^#\s]+)\s*(?:#.*)?$",
+            raw_line,
+        )
+        if match:
+            ports[match.group(1)] = match.group(2).strip("'\"")
+    for name in ("mixed-port", "port"):
+        port = ports.get(name)
+        if port and port.isdigit() and 1 <= int(port) <= 65535:
+            return f"http://127.0.0.1:{int(port)}"
+    return None
+
+
 def detect_mihomo_values(*, proc_root: Path = Path("/proc")) -> dict[str, str]:
     try:
         processes = sorted(
@@ -384,11 +409,18 @@ def detect_mihomo_values(*, proc_root: Path = Path("/proc")) -> dict[str, str]:
             cwd = Path("/")
         for config in mihomo_config_candidates(arguments, cwd=cwd):
             try:
-                address = parse_mihomo_dns(config.read_text(encoding="utf-8"))
+                content = config.read_text(encoding="utf-8")
             except OSError:
                 continue
+            values: dict[str, str] = {}
+            address = parse_mihomo_dns(content)
+            proxy = parse_mihomo_download_proxy(content)
             if address:
-                return {"DNSDIST_MIHOMO_ADDRESS": address}
+                values["DNSDIST_MIHOMO_ADDRESS"] = address
+            if proxy:
+                values["DNSDIST_DOWNLOAD_PROXY"] = proxy
+            if values:
+                return values
     return {}
 
 
@@ -424,6 +456,18 @@ def print_detected_values(
             print(f"  {interface.name}：{status}，{detail}")
     if "DNSDIST_MIHOMO_ADDRESS" in values:
         print(f"检测到 Mihomo DNS：{values['DNSDIST_MIHOMO_ADDRESS']}")
+    if "DNSDIST_DOWNLOAD_PROXY" in values:
+        print(f"检测到 Mihomo HTTP/混合代理：{values['DNSDIST_DOWNLOAD_PROXY']}")
+
+
+def prompt_use_download_proxy(proxy: str) -> bool:
+    while True:
+        entered = input(f"是否使用 Mihomo 代理下载（{proxy}）？[Y/n]: ").strip().lower()
+        if entered in {"", "y", "yes"}:
+            return True
+        if entered in {"n", "no"}:
+            return False
+        print("输入无效：请输入 y 或 n")
 
 
 def migrate_old_defaults(values: dict[str, str]) -> None:
@@ -520,6 +564,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--install-dir", type=Path, required=True)
     parser.add_argument("--interactive", action="store_true")
     parser.add_argument("--dns-port")
+    proxy_group = parser.add_mutually_exclusive_group()
+    proxy_group.add_argument("--download-proxy")
+    proxy_group.add_argument("--no-download-proxy", action="store_true")
     parser.add_argument("--detect-system", action="store_true")
     return parser
 
@@ -530,6 +577,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     current = read_values(args.current) if args.current else {}
     migrate_old_defaults(current)
     values: dict[str, str] = {}
+    detected: dict[str, str] = {}
     if args.detect_system:
         wireguard_interfaces = inspect_wireguard_interfaces()
         detected = detect_system_values(
@@ -537,11 +585,29 @@ def main(argv: Sequence[str] | None = None) -> int:
             wireguard_interfaces=wireguard_interfaces,
         )
         print_detected_values(detected, wireguard_interfaces)
-        values.update(detected)
+        values.update(
+            name_value
+            for name_value in detected.items()
+            if name_value[0] != "DNSDIST_DOWNLOAD_PROXY"
+        )
     values.update(current)
     fixed_values = {}
     if args.dns_port is not None:
         fixed_values["DNSDIST_WG_DNS_PORT"] = args.dns_port
+    if args.download_proxy is not None:
+        validate_url(args.download_proxy)
+        fixed_values["DNSDIST_DOWNLOAD_PROXY"] = args.download_proxy
+    elif args.no_download_proxy:
+        fixed_values["DNSDIST_DOWNLOAD_PROXY"] = ""
+    elif (
+        args.interactive
+        and "DNSDIST_DOWNLOAD_PROXY" not in current
+        and detected.get("DNSDIST_DOWNLOAD_PROXY")
+    ):
+        proxy = detected["DNSDIST_DOWNLOAD_PROXY"]
+        fixed_values["DNSDIST_DOWNLOAD_PROXY"] = (
+            proxy if prompt_use_download_proxy(proxy) else ""
+        )
     content = render_config(
         template,
         values,

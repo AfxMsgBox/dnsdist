@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   printf '%s\n' \
-    '用法：sudo ./sh/update.sh [选项]' \
+    '用法：./sh/update.sh [选项]' \
     '' \
     '从 GitHub 压缩包更新全部程序文件，保留本机参数并补充新增参数。' \
     '' \
@@ -39,6 +39,7 @@ validate_install_dir "${install_dir}"
 ensure_dependencies
 check_base_environment
 source_is_complete "${install_dir}" || die '当前安装目录结构不完整'
+load_local_config "${install_dir}"
 log_success '更新环境检查通过'
 
 if [[ ${configure} -eq 1 && ! -t 0 ]]; then

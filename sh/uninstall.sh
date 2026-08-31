@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   printf '%s\n' \
-    '用法：sudo ./sh/uninstall.sh [--purge] [--dry-run]' \
+    '用法：./sh/uninstall.sh [--purge] [--dry-run]' \
     '' \
     '停止服务并移除系统中的项目软链接。默认保留集中安装目录。' \
     '' \
@@ -76,7 +76,20 @@ remove_managed_link() {
 
 timers=(dnsdist-domain-update.timer dnsdist-ecs-update.timer)
 run_if_possible systemctl disable --now "${timers[@]}"
+run_if_possible systemctl stop \
+  dnsdist-domain-update.service \
+  dnsdist-ecs-update.service
 run_if_possible systemctl disable --now dnsdist.service
+if [[ ${dry_run} -eq 0 ]]; then
+  if systemctl is-active --quiet dnsdist.service; then
+    printf '%s\n' '错误：dnsdist.service 未能停止，卸载已中止' >&2
+    exit 1
+  fi
+  if systemctl is-enabled --quiet dnsdist.service; then
+    printf '%s\n' '错误：dnsdist.service 未能关闭开机自启，卸载已中止' >&2
+    exit 1
+  fi
+fi
 
 for unit in \
   dnsdist-domain-update.service \
@@ -110,4 +123,3 @@ if [[ ${purge} -eq 1 ]]; then
 else
   printf 'dnsdist 策略网关已卸载，安装目录已保留：%s\n' "${install_dir}"
 fi
-

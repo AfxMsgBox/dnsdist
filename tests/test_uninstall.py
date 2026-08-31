@@ -36,6 +36,16 @@ class UninstallScriptTest(unittest.TestCase):
         result = self.run_dry("--unknown")
         self.assertEqual(result.returncode, 2)
 
+    def test_services_are_stopped_before_managed_files_are_removed(self) -> None:
+        content = UNINSTALLER.read_text(encoding="utf-8")
+        self.assertIn("dnsdist-domain-update.service", content)
+        self.assertIn("systemctl is-active --quiet dnsdist.service", content)
+        self.assertIn("systemctl is-enabled --quiet dnsdist.service", content)
+        self.assertLess(
+            content.index('run_if_possible systemctl disable --now dnsdist.service'),
+            content.index("for unit in"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -22,6 +22,8 @@ class InstallScriptTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("/opt/mydnsdist", result.stdout)
         self.assertIn("--dns-port", result.stdout)
+        self.assertIn("--download-proxy", result.stdout)
+        self.assertIn("--no-download-proxy", result.stdout)
 
     def test_invalid_dns_port_is_rejected_before_installation(self) -> None:
         for value in ("0", "65536", "not-a-port"):
@@ -84,6 +86,27 @@ class InstallScriptTest(unittest.TestCase):
         self.assertIn("wget", content)
         self.assertIn("curl", content)
         self.assertNotIn("git clone", content)
+
+    def test_proxy_is_persisted_and_all_install_downloads_can_use_it(self) -> None:
+        installer = INSTALLER.read_text(encoding="utf-8")
+        common = COMMON.read_text(encoding="utf-8")
+        environment = (ROOT / "config/dnsdist-automation").read_text(
+            encoding="utf-8"
+        )
+        domains = (ROOT / "sh/dnsdist_automation/domains.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("detect_mihomo_download_proxy", installer)
+        self.assertIn('config_arguments+=(--download-proxy', installer)
+        self.assertIn("DNSDIST_DOWNLOAD_PROXY=", environment)
+        self.assertIn("DNSDIST_DOWNLOAD_PROXY", common)
+        self.assertIn("wget --no-proxy", common)
+        self.assertIn("--noproxy ''", common)
+        self.assertIn('os.getenv("DNSDIST_DOWNLOAD_PROXY"', domains)
+
+    def test_install_enables_and_starts_dnsdist(self) -> None:
+        content = INSTALLER.read_text(encoding="utf-8")
+        self.assertIn("systemctl enable --now dnsdist.service", content)
 
     def test_query_log_switch_defaults_off_and_writes_to_stdout(self) -> None:
         environment = (ROOT / "config/dnsdist-automation").read_text(encoding="utf-8")

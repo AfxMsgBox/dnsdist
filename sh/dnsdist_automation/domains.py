@@ -114,11 +114,29 @@ def fetch_text(
     max_bytes: int = 50 * 1024 * 1024,
 ) -> str:
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        declared_length = response.headers.get("Content-Length")
-        if declared_length and int(declared_length) > max_bytes:
-            raise ValueError(f"download is too large: {url}")
-        payload = response.read(max_bytes + 1)
+    proxy = os.getenv("DNSDIST_DOWNLOAD_PROXY", "").strip()
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler(
+            {"http": proxy, "https": proxy} if proxy else {}
+        )
+    )
+    bypass_environment = (
+        {
+            name: os.environ.pop(name)
+            for name in ("no_proxy", "NO_PROXY")
+            if name in os.environ
+        }
+        if proxy
+        else {}
+    )
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            declared_length = response.headers.get("Content-Length")
+            if declared_length and int(declared_length) > max_bytes:
+                raise ValueError(f"download is too large: {url}")
+            payload = response.read(max_bytes + 1)
+    finally:
+        os.environ.update(bypass_environment)
     if len(payload) > max_bytes:
         raise ValueError(f"download exceeded {max_bytes} bytes: {url}")
     return payload.decode("utf-8-sig")

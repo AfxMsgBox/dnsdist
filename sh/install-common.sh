@@ -63,11 +63,22 @@ validate_install_dir() {
 download_file() {
   local url=$1
   local output=$2
+  local proxy=${DNSDIST_DOWNLOAD_PROXY:-}
   if command -v wget >/dev/null 2>&1; then
-    wget --quiet --timeout=30 --tries=3 --output-document="${output}" "${url}"
+    if [[ -n ${proxy} ]]; then
+      http_proxy="${proxy}" https_proxy="${proxy}" no_proxy='' NO_PROXY='' \
+        wget --quiet --timeout=30 --tries=3 \
+          --output-document="${output}" "${url}"
+    else
+      wget --no-proxy --quiet --timeout=30 --tries=3 \
+        --output-document="${output}" "${url}"
+    fi
   elif command -v curl >/dev/null 2>&1; then
+    local -a proxy_arguments=(--proxy '')
+    [[ -n ${proxy} ]] && proxy_arguments=(--proxy "${proxy}" --noproxy '')
     curl --fail --location --silent --show-error \
-      --connect-timeout 30 --retry 3 --output "${output}" "${url}"
+      --connect-timeout 30 --retry 3 "${proxy_arguments[@]}" \
+      --output "${output}" "${url}"
   else
     die '缺少 wget 或 curl'
   fi
@@ -322,6 +333,7 @@ check_mihomo_listener() {
 
 load_local_config() {
   local root=$1
+  unset DNSDIST_DOWNLOAD_PROXY
   set -a
   # shellcheck disable=SC1090
   source "${root}/config/dnsdist-automation"

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import sys
 import unittest
+from os import environ
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +15,7 @@ from dnsdist_automation.domains import (  # noqa: E402
     _validate_drift,
     adblock_pattern_to_regex,
     build_rules,
+    fetch_text,
     format_report,
     lower_safe_regex,
     minimize_suffixes,
@@ -35,6 +37,38 @@ class DomainRulesTest(unittest.TestCase):
         self.assertEqual(normalize_domain("测试.example"), "xn--0zwm56d.example")
         self.assertIsNone(normalize_domain("192.0.2.1"))
         self.assertIsNone(normalize_domain("not a domain"))
+
+    def test_rule_download_uses_only_configured_proxy(self) -> None:
+        response = MagicMock()
+        response.headers = {}
+        response.read.return_value = b"example.com\n"
+        context = MagicMock()
+        context.__enter__.return_value = response
+        opener = MagicMock()
+        opener.open.return_value = context
+        with (
+            patch.dict(
+                environ,
+                {
+                    "DNSDIST_DOWNLOAD_PROXY": "http://127.0.0.1:7890",
+                    "NO_PROXY": "example.test",
+                },
+                clear=False,
+            ),
+            patch("dnsdist_automation.domains.urllib.request.ProxyHandler") as handler,
+            patch(
+                "dnsdist_automation.domains.urllib.request.build_opener",
+                return_value=opener,
+            ),
+        ):
+            self.assertEqual(fetch_text("https://example.test/list"), "example.com\n")
+            self.assertEqual(environ.get("NO_PROXY"), "example.test")
+        handler.assert_called_once_with(
+            {
+                "http": "http://127.0.0.1:7890",
+                "https": "http://127.0.0.1:7890",
+            }
+        )
 
     def test_proxy_yaml_parser(self) -> None:
         text = (ROOT / "tests/fixtures/proxy-list.txt").read_text(encoding="utf-8")

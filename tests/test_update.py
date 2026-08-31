@@ -37,6 +37,10 @@ class UpdateScriptTest(unittest.TestCase):
             "journalctl --unit dnsdist.service --lines 80 --no-pager",
             content,
         )
+        self.assertLess(
+            content.index('load_local_config "${install_dir}"'),
+            content.index('download_file "${archive_url}" "${archive}"'),
+        )
 
     def test_new_rules_are_generated_before_installation_swap(self) -> None:
         content = UPDATER.read_text(encoding="utf-8")

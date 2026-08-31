@@ -32,7 +32,7 @@ bootstrap_warning() {
 
 usage() {
   printf '%s\n' \
-    '用法：sudo ./install.sh [选项]' \
+    '用法：bash ./install.sh [选项]' \
     '' \
     '仅下载本文件即可完成依赖检查、完整代码下载、参数配置和服务启动。' \
     '' \
@@ -40,6 +40,8 @@ usage() {
     '  --install-dir PATH   安装目录，默认 /opt/mydnsdist' \
     '  --dns-port PORT      dnsdist 监听端口，未指定时默认 53' \
     '  --non-interactive    不询问参数，使用已有值、系统检测值或仓库默认值' \
+    '  --download-proxy URL 使用指定的 HTTP/HTTPS 下载代理' \
+    '  --no-download-proxy  即使检测到 Mihomo 也使用直连' \
     '  --archive-url URL    覆盖 GitHub 源码压缩包地址' \
     '  -h, --help           显示帮助'
 }
@@ -47,6 +49,9 @@ usage() {
 install_dir=''
 dns_port=''
 archive_url=${DNSDIST_ARCHIVE_URL:-${DEFAULT_ARCHIVE_URL}}
+download_proxy=${DNSDIST_DOWNLOAD_PROXY:-}
+download_proxy_mode=auto
+[[ -n ${download_proxy} ]] && download_proxy_mode=set
 non_interactive=0
 deploy_only=0
 while [[ $# -gt 0 ]]; do
@@ -62,6 +67,17 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --non-interactive) non_interactive=1; shift ;;
+    --download-proxy)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      download_proxy=$2
+      download_proxy_mode=set
+      shift 2
+      ;;
+    --no-download-proxy)
+      download_proxy=''
+      download_proxy_mode=disabled
+      shift
+      ;;
     --archive-url)
       [[ $# -ge 2 ]] || { usage >&2; exit 2; }
       archive_url=$2
@@ -72,6 +88,11 @@ while [[ $# -gt 0 ]]; do
     *) usage >&2; exit 2 ;;
   esac
 done
+
+if [[ -n ${download_proxy} && ! ${download_proxy} =~ ^https?://[^[:space:]]+$ ]]; then
+  bootstrap_error '下载代理必须是有效的 HTTP 或 HTTPS URL'
+  exit 2
+fi
 
 if [[ -n ${dns_port} ]]; then
   if [[ ! ${dns_port} =~ ^[0-9]+$ || ${#dns_port} -gt 5 ]]; then
@@ -93,6 +114,85 @@ fi
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source_root=$(cd -- "${script_dir}/.." && pwd)
 common_file=${script_dir}/install-common.sh
+
+read_mihomo_proxy_port() {
+  local config=$1
+  local line key value mixed_port='' http_port=''
+  [[ -f ${config} ]] || return 1
+  while IFS= read -r line || [[ -n ${line} ]]; do
+    [[ -n ${line} && ${line:0:1} != ' ' && ${line:0:1} != $'\t' ]] || continue
+    line=${line%%#*}
+    [[ ${line} == *:* ]] || continue
+    key=${line%%:*}
+    value=${line#*:}
+    key=${key//[[:space:]]/}
+    value=${value//[[:space:]]/}
+    value=${value//\"/}
+    value=${value//\'/}
+    [[ ${value} =~ ^[0-9]+$ ]] || continue
+    (( 10#${value} >= 1 && 10#${value} <= 65535 )) || continue
+    case "${key}" in
+      mixed-port) mixed_port=$((10#${value})) ;;
+      port) http_port=$((10#${value})) ;;
+    esac
+  done < "${config}"
+  if [[ -n ${mixed_port} ]]; then
+    printf '%s\n' "${mixed_port}"
+  elif [[ -n ${http_port} ]]; then
+    printf '%s\n' "${http_port}"
+  else
+    return 1
+  fi
+}
+
+detect_mihomo_download_proxy() {
+  local cmdline process_dir executable cwd config directory argument port candidate index
+  local -a arguments candidates
+  for cmdline in /proc/[0-9]*/cmdline; do
+    [[ -r ${cmdline} ]] || continue
+    arguments=()
+    while IFS= read -r -d '' argument; do
+      arguments+=("${argument}")
+    done < "${cmdline}"
+    [[ ${#arguments[@]} -gt 0 ]] || continue
+    executable=${arguments[0]##*/}
+    [[ ${executable,,} == *mihomo* ]] || continue
+    process_dir=${cmdline%/cmdline}
+    cwd=$(readlink "${process_dir}/cwd" 2>/dev/null || printf '/')
+    config=''
+    directory=''
+    for ((index = 1; index < ${#arguments[@]}; index++)); do
+      case "${arguments[index]}" in
+        -f|--config)
+          ((index + 1 < ${#arguments[@]})) && config=${arguments[index + 1]}
+          ((index++))
+          ;;
+        --config=*) config=${arguments[index]#*=} ;;
+        -d|--dir)
+          ((index + 1 < ${#arguments[@]})) && directory=${arguments[index + 1]}
+          ((index++))
+          ;;
+        --dir=*) directory=${arguments[index]#*=} ;;
+      esac
+    done
+    candidates=()
+    if [[ -n ${config} ]]; then
+      [[ ${config} == /* ]] || config=${cwd}/${config}
+      candidates+=("${config}")
+    else
+      directory=${directory:-${cwd}}
+      [[ ${directory} == /* ]] || directory=${cwd}/${directory}
+      candidates+=("${directory}/config.yaml" "${directory}/config.yml")
+    fi
+    for candidate in "${candidates[@]}"; do
+      if port=$(read_mihomo_proxy_port "${candidate}"); then
+        printf 'http://127.0.0.1:%s\n' "${port}"
+        return 0
+      fi
+    done
+  done
+  return 1
+}
 
 if [[ -z ${install_dir} ]]; then
   install_dir=${DEFAULT_INSTALL_DIR}
@@ -122,6 +222,29 @@ if [[ ! -f ${common_file} ]]; then
     bootstrap_error '安装目录不能包含 . 或 .. 路径段'
     exit 1
   }
+  if [[ ${download_proxy_mode} == auto && ${non_interactive} -eq 0 && -t 0 ]]; then
+    detected_proxy=$(detect_mihomo_download_proxy || true)
+    if [[ -n ${detected_proxy} ]]; then
+      while true; do
+        read -r -p \
+          "检测到 Mihomo HTTP/混合代理 ${detected_proxy}，是否用于下载？[Y/n]: " \
+          use_proxy
+        case "${use_proxy,,}" in
+          ''|y|yes)
+            download_proxy=${detected_proxy}
+            download_proxy_mode=set
+            break
+            ;;
+          n|no)
+            download_proxy=''
+            download_proxy_mode=disabled
+            break
+            ;;
+          *) bootstrap_warning '请输入 y 或 n' ;;
+        esac
+      done
+    fi
+  fi
   bootstrap_commands=()
   bootstrap_packages=()
   if ! command -v wget >/dev/null 2>&1 && ! command -v curl >/dev/null 2>&1; then
@@ -153,10 +276,22 @@ if [[ ! -f ${common_file} ]]; then
   extracted=${temporary_dir}/source
   bootstrap_step '下载 dnsdist 策略网关程序包'
   if command -v wget >/dev/null 2>&1; then
-    wget --quiet --timeout=30 --tries=3 --output-document="${archive}" "${archive_url}"
+    if [[ -n ${download_proxy} ]]; then
+      http_proxy="${download_proxy}" https_proxy="${download_proxy}" \
+        no_proxy='' NO_PROXY='' \
+        wget --quiet --timeout=30 --tries=3 \
+          --output-document="${archive}" "${archive_url}"
+    else
+      wget --no-proxy --quiet --timeout=30 --tries=3 \
+        --output-document="${archive}" "${archive_url}"
+    fi
   else
+    bootstrap_proxy_arguments=(--proxy '')
+    [[ -n ${download_proxy} ]] && \
+      bootstrap_proxy_arguments=(--proxy "${download_proxy}" --noproxy '')
     curl --fail --location --silent --show-error \
-      --connect-timeout 30 --retry 3 --output "${archive}" "${archive_url}"
+      --connect-timeout 30 --retry 3 "${bootstrap_proxy_arguments[@]}" \
+      --output "${archive}" "${archive_url}"
   fi
   mkdir -p "${extracted}"
   tar -xzf "${archive}" --strip-components=1 -C "${extracted}"
@@ -168,6 +303,11 @@ if [[ ! -f ${common_file} ]]; then
   arguments=(--install-dir "${install_dir}" --archive-url "${archive_url}")
   [[ -n ${dns_port} ]] && arguments+=(--dns-port "${dns_port}")
   [[ ${non_interactive} -eq 1 ]] && arguments+=(--non-interactive)
+  if [[ ${download_proxy_mode} == set ]]; then
+    arguments+=(--download-proxy "${download_proxy}")
+  elif [[ ${download_proxy_mode} == disabled ]]; then
+    arguments+=(--no-download-proxy)
+  fi
   "${extracted}/sh/install.sh" "${arguments[@]}"
   exit
 fi
@@ -288,6 +428,11 @@ config_arguments=(
 )
 [[ -n ${config_current} ]] && config_arguments+=(--current "${config_current}")
 [[ -n ${dns_port} ]] && config_arguments+=(--dns-port "${dns_port}")
+if [[ ${download_proxy_mode} == set ]]; then
+  config_arguments+=(--download-proxy "${download_proxy}")
+elif [[ ${download_proxy_mode} == disabled ]]; then
+  config_arguments+=(--no-download-proxy)
+fi
 if [[ ${non_interactive} -eq 0 && -t 0 ]]; then
   log_step '确认 dnsdist 运行参数；直接回车使用方括号中的默认值'
   config_arguments+=(--interactive)
@@ -374,8 +519,10 @@ log_step '生成规则并验证 dnsdist 配置'
 "${source_root}/sh/update-dnsdist-domains.py" --no-check --no-reload
 "${source_root}/sh/update-dnsdist-ecs.py" --no-check --no-reload
 dnsdist --check-config -C "${source_root}/config/dnsdist.conf"
-systemctl enable dnsdist.service
-systemctl restart dnsdist.service
+systemctl enable --now dnsdist.service
+if [[ ${existing_installation} -eq 1 ]]; then
+  systemctl restart dnsdist.service
+fi
 systemctl enable --now \
   dnsdist-domain-update.timer \
   dnsdist-ecs-update.timer
