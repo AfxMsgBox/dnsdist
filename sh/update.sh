@@ -102,7 +102,9 @@ if [[ -f ${install_dir}/config/vendor-dnsdist.conf.backup ]]; then
     "${next_root}/config/vendor-dnsdist.conf.backup"
 fi
 printf '%s\n' "${new_checksum}" > "${next_root}/.source-sha256"
-render_systemd_units "${next_root}"
+# Unit files live in the staging tree for validation, but every embedded path
+# must already point to the final installation directory used after the swap.
+render_systemd_units "${next_root}" "${install_dir}"
 
 dnsdist_group=$(stat -c '%G' "${install_dir}/generated")
 getent group "${dnsdist_group}" >/dev/null || die '无法识别现有 dnsdist 服务组'
@@ -150,6 +152,12 @@ rollback() {
     >/dev/null 2>&1 || true
 }
 
+report_activation_failure() {
+  log_warning '新版本激活失败，回滚前输出 dnsdist 诊断信息：'
+  systemctl status dnsdist.service --no-pager --full || true
+  journalctl --unit dnsdist.service --lines 80 --no-pager || true
+}
+
 systemctl stop dnsdist-domain-update.timer dnsdist-ecs-update.timer
 systemctl stop dnsdist.service
 cd "${parent_dir}"
@@ -175,6 +183,7 @@ activation_status=$?
 set -e
 
 if [[ ${activation_status} -ne 0 ]]; then
+  report_activation_failure
   rollback
   swapped=0
   die '更新失败，已恢复上一版本'

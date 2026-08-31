@@ -28,6 +28,15 @@ class UpdateScriptTest(unittest.TestCase):
         self.assertIn('remove_development_files "${next_root}"', content)
         self.assertNotIn("unittest discover", content)
         self.assertNotIn("git pull", content)
+        self.assertIn(
+            'render_systemd_units "${next_root}" "${install_dir}"',
+            content,
+        )
+        self.assertIn("report_activation_failure", content)
+        self.assertIn(
+            "journalctl --unit dnsdist.service --lines 80 --no-pager",
+            content,
+        )
 
     def test_new_rules_are_generated_before_installation_swap(self) -> None:
         content = UPDATER.read_text(encoding="utf-8")

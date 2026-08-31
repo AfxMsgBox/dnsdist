@@ -96,6 +96,39 @@ class InstallScriptTest(unittest.TestCase):
             dnsdist_config.index("local domainRules = dofile"),
         )
 
+    def test_systemd_units_can_be_staged_for_a_final_install_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            staged_root = Path(temporary_directory) / "staged"
+            systemd_dir = staged_root / "systemd"
+            systemd_dir.mkdir(parents=True)
+            unit = systemd_dir / "dnsdist-test.service"
+            unit.write_text(
+                "EnvironmentFile=-@INSTALL_DIR@/config/dnsdist-automation\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'source "$1"; render_systemd_units "$2" "$3"',
+                    "test",
+                    str(COMMON),
+                    str(staged_root),
+                    "/opt/mydnsdist",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            rendered = unit.read_text(encoding="utf-8")
+            self.assertIn(
+                "EnvironmentFile=-/opt/mydnsdist/config/dnsdist-automation",
+                rendered,
+            )
+            self.assertNotIn(str(staged_root), rendered)
+            self.assertNotIn("@INSTALL_DIR@", rendered)
+
     def test_installer_only_suggests_manual_dependency_installation(self) -> None:
         content = "\n".join(
             (

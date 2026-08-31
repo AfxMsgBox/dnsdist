@@ -185,11 +185,23 @@ escape_sed_replacement() {
 
 render_systemd_units() {
   local root=$1
-  local escaped unit
-  escaped=$(escape_sed_replacement "${root}")
+  local final_install_dir=${2:-${root}}
+  local content escaped temporary unit
+  escaped=$(escape_sed_replacement "${final_install_dir}")
   for unit in "${root}"/systemd/*; do
     [[ -f ${unit} ]] || continue
-    sed -i "s|@INSTALL_DIR@|${escaped}|g" "${unit}"
+    temporary=$(mktemp "${unit}.rendered.XXXXXX")
+    if ! sed "s|@INSTALL_DIR@|${escaped}|g" "${unit}" > "${temporary}"; then
+      rm -f -- "${temporary}"
+      die "无法渲染 systemd 单元：${unit}"
+    fi
+    mv "${temporary}" "${unit}"
+    content=$(<"${unit}")
+    [[ ${content} != *'@INSTALL_DIR@'* ]] || \
+      die "systemd 单元仍包含未渲染的安装路径：${unit}"
+    if [[ ${root} != "${final_install_dir}" && ${content} == *"${root}"* ]]; then
+      die "systemd 单元错误引用临时目录：${unit}"
+    fi
   done
 }
 
