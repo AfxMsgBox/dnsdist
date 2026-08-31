@@ -29,6 +29,19 @@ class UpdateScriptTest(unittest.TestCase):
         self.assertNotIn("unittest discover", content)
         self.assertNotIn("git pull", content)
 
+    def test_new_rules_are_generated_before_installation_swap(self) -> None:
+        content = UPDATER.read_text(encoding="utf-8")
+        generate = content.index(
+            '"${next_root}/sh/update-dnsdist-domains.py" --no-check --no-reload'
+        )
+        validate = content.index(
+            'dnsdist --check-config -C "${next_root}/config/dnsdist.conf"'
+        )
+        swap = content.index('mv "${install_dir}" "${previous_root}"')
+        self.assertLess(generate, validate)
+        self.assertLess(validate, swap)
+        self.assertEqual(content.count("update-dnsdist-domains.py"), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

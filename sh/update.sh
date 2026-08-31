@@ -128,6 +128,11 @@ set -a
 source "${next_root}/config/dnsdist-automation"
 set +a
 check_mihomo_listener "${DNSDIST_MIHOMO_ADDRESS}"
+log_step '使用新版本生成并验证规则'
+DNSDIST_INSTALL_DIR=${next_root} \
+  "${next_root}/sh/update-dnsdist-domains.py" --no-check --no-reload
+DNSDIST_INSTALL_DIR=${next_root} \
+  "${next_root}/sh/update-dnsdist-ecs.py" --no-check --no-reload
 DNSDIST_INSTALL_DIR=${next_root} \
   dnsdist --check-config -C "${next_root}/config/dnsdist.conf"
 
@@ -160,8 +165,6 @@ set +e
   source "${install_dir}/config/dnsdist-automation"
   set +a
   systemctl daemon-reload
-  "${install_dir}/sh/update-dnsdist-domains.py" --no-check --no-reload
-  "${install_dir}/sh/update-dnsdist-ecs.py" --no-check --no-reload
   dnsdist --check-config -C "${install_dir}/config/dnsdist.conf"
   systemctl restart dnsdist.service
   systemctl enable --now \
